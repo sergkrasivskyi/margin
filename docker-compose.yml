@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: margin_research_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: margin_research
+      POSTGRES_USER: margin_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  postgres_data:
+
