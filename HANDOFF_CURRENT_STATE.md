@@ -8,8 +8,32 @@
 - Local-first Data Core MVP is working.
 - Binance available-inventory is collected cyclically.
 - `margin_pool_snapshots` and `pool_metrics` accumulate over time.
-- `allAssets` 400 remains non-blocking.
+- `allAssets` 400 remains non-blocking and can be disabled by default via env.
 - Next milestone: Data Collection Hardening v0.2.
+
+## Data Collection Hardening v0.2 changes
+- Added `COLLECT_MARGIN_ASSETS` flag (default `false`):
+  - when `false`, `/sapi/v1/margin/allAssets` is not called;
+  - this prevents `partial_success` caused only by non-critical allAssets errors.
+- Added `PRICE_COLLECTION_MODE`:
+  - `disabled` -> skip klines collection without error;
+  - `scheduled` -> keep current klines behavior.
+- Added scheduler modes:
+  - `SCHEDULER_MODE=interval` (legacy behavior)
+  - `SCHEDULER_MODE=aligned` (time-grid scheduling)
+- Added aligned scheduler parameters:
+  - `ALIGNMENT_MINUTES`
+  - `COLLECTION_DELAY_SECONDS`
+- Added health/report CLI:
+  - `python -m collector.main --health-report`
+  - prints DB health and top pool changes reports.
+
+## New env parameters (no secrets)
+- `COLLECT_MARGIN_ASSETS=false`
+- `PRICE_COLLECTION_MODE=scheduled`
+- `SCHEDULER_MODE=aligned`
+- `ALIGNMENT_MINUTES=15`
+- `COLLECTION_DELAY_SECONDS=20`
 
 ## Latest loop test results
 - Extended loop test підтвердив стабільне накопичення Binance Available Inventory.
@@ -102,6 +126,11 @@ python -m collector.main --once
 Run collector loop:
 ```powershell
 python -m collector.main --loop
+```
+
+Run health/report:
+```powershell
+python -m collector.main --health-report
 ```
 
 Open psql:

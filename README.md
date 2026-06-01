@@ -1,187 +1,185 @@
 # margin-loan-research
 
-Локальний MVP-проєкт для збору Binance margin available inventory та spot klines у PostgreSQL.
+Local-first Data Core MVP для збору Binance Margin Available Inventory (Available Pool) у PostgreSQL.
 
-## 1. Що це за проєкт
+## MVP scope
 
-`margin-loan-research` — це Local Data Core MVP: локальний Python collector + PostgreSQL у Docker.
+- Collector запускається локально через `.venv`.
+- PostgreSQL працює в Docker.
+- Головна цінність: `available-inventory` snapshots + `pool_metrics`.
+- `price_klines` — допоміжний кеш (опційно).
+- Немає web dashboard, backend API, Telegram, trading/borrow/repay.
 
-## 2. Мета MVP
-
-Збирати:
-- `margin/allAssets`
-- `margin/available-inventory` (type=`MARGIN`)
-- `spot klines` для watchlist активів
-
-І зберігати ці дані у локальну БД для подальших досліджень.
-
-## 3. Чому збираємо Available Inventory, а не Borrow/Repay
-
-У цьому milestone ми будуємо безпечний read-only data core без торгових дій і без неофіційних endpoint-ів. `available-inventory` дає достатній сигнал для стартового аналізу пулу ліквідності.
-
-## 4. Чому Available Inventory — це proxy, а не точний Borrow/Repay
-
-Зміни `Available Pool` не дорівнюють напряму borrow/repay. На них можуть впливати різні фактори (поповнення пулу, внутрішні зміни ліквідності). Тому в БД використані назви:
-- `pool_change`
-- `borrow_pressure_proxy`
-- `repay_or_refill_proxy`
-
-## 5. Як створити проєкт у C:\Projects\margin-loan-research
-
-1. Створити директорію (якщо ще не існує):  
-   `mkdir C:\Projects\margin-loan-research`
-2. Відкрити у VS Code цю папку.
-
-## 6. Як створити Python virtual environment
+## Quick start
 
 ```powershell
 python -m venv .venv
-```
-
-## 7. Як активувати venv у PowerShell
-
-```powershell
 .\.venv\Scripts\Activate.ps1
-```
-
-## 8. Як встановити залежності
-
-```powershell
 pip install -r collector\requirements.txt
-```
-
-## 9. Як створити .env з .env.example
-
-```powershell
 Copy-Item .env.example .env
-```
-
-Потім відредагувати `.env` і задати реальні значення за потреби.
-
-## 10. Як запустити PostgreSQL
-
-```powershell
 docker compose up -d postgres
+python -m collector.main --once
 ```
 
-## 11. Як перевірити, що postgres працює
+## Основні режими запуску
 
-```powershell
-docker compose ps
-```
-
-## 12. Як запустити collector один раз
-
+Один цикл:
 ```powershell
 python -m collector.main --once
 ```
 
-## 13. Як запустити collector у loop режимі
-
+Loop режим:
 ```powershell
 python -m collector.main --loop
 ```
 
-## 14. Як подивитись таблиці через psql
-
+Health/report:
 ```powershell
-docker compose exec postgres psql -U margin_user -d margin_research
+python -m collector.main --health-report
 ```
 
-## 15. SQL-запити для перевірки
+## Конфігурація (.env)
+
+Базові:
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- `BINANCE_API_KEY`, `BINANCE_API_SECRET`
+- `WATCHLIST_ASSETS`, `KLINE_INTERVAL`, `POOL_TYPE`
+
+Collector v0.2:
+- `COLLECTOR_INTERVAL_SECONDS=900`
+- `COLLECT_MARGIN_ASSETS=false`
+- `PRICE_COLLECTION_MODE=scheduled` (`scheduled` або `disabled`)
+- `SCHEDULER_MODE=aligned` (`aligned` або `interval`)
+- `ALIGNMENT_MINUTES=15`
+- `COLLECTION_DELAY_SECONDS=20`
+
+Рекомендований блок `.env.example` (без secrets):
+
+```env
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=margin_research
+POSTGRES_USER=margin_user
+POSTGRES_PASSWORD=change_me
+
+BINANCE_API_KEY=
+BINANCE_API_SECRET=
+
+WATCHLIST_ASSETS=BTC,ETH,ARKM
+KLINE_INTERVAL=15m
+COLLECTOR_INTERVAL_SECONDS=900
+POOL_TYPE=MARGIN
+COLLECT_MARGIN_ASSETS=false
+PRICE_COLLECTION_MODE=scheduled
+SCHEDULER_MODE=aligned
+ALIGNMENT_MINUTES=15
+COLLECTION_DELAY_SECONDS=20
+```
+
+## Пояснення v0.2
+
+### `COLLECT_MARGIN_ASSETS`
+- `false` (default): не викликає `/sapi/v1/margin/allAssets`.
+- `true`: викликає `allAssets`, але його помилка non-critical.
+
+Це прибирає перехід у `partial_success` через non-blocking `allAssets`.
+
+### `PRICE_COLLECTION_MODE`
+- `disabled`: collector не збирає klines (це не помилка).
+- `scheduled`: збір klines працює як раніше.
+
+### `SCHEDULER_MODE`
+- `interval`: старий режим — sleep після завершення циклу.
+- `aligned`: запуск на часовій сітці.
+  - Для `ALIGNMENT_MINUTES=15`, `COLLECTION_DELAY_SECONDS=20`:
+    - `00:00:20`, `00:15:20`, `00:30:20`, `00:45:20`
+
+У логах:
+- `scheduler_mode`
+- `next_run_at`
+- `alignment_minutes`
+- `collection_delay_seconds`
+- `actual_started_at`
+- `delay_from_schedule_seconds`
+
+## Non-blocking issue
+
+`GET /sapi/v1/margin/allAssets` може повертати HTTP 400 (`code=-2014`) у певному оточенні.
+Для MVP це non-blocking, бо основний endpoint `available-inventory` працює.
+За замовчуванням `COLLECT_MARGIN_ASSETS=false`.
+
+## SQL перевірки
 
 ```sql
-SELECT * FROM collector_runs ORDER BY started_at DESC LIMIT 5;
+SELECT collector_name, started_at, finished_at, status, records_collected, error_message
+FROM collector_runs
+ORDER BY started_at DESC
+LIMIT 10;
+
+SELECT COUNT(*) FROM symbols;
 SELECT COUNT(*) FROM assets;
 SELECT COUNT(*) FROM margin_pool_snapshots;
 SELECT COUNT(*) FROM price_klines;
 SELECT COUNT(*) FROM pool_metrics;
 ```
 
-## 16. Як зробити backup
+Часові блоки snapshots:
 
-```powershell
-.\scripts\backup_db.ps1
+```sql
+SELECT date_trunc('minute', collected_at) AS minute, COUNT(*) AS rows
+FROM margin_pool_snapshots
+GROUP BY minute
+ORDER BY minute DESC
+LIMIT 10;
 ```
 
-## 17. Як зробити restore
+Кількість snapshots по asset:
 
-```powershell
-.\scripts\restore_db.ps1 -BackupPath .\data\backups\backup_YYYY-MM-DD_HH-mm.sql
+```sql
+SELECT asset, COUNT(*) AS snapshots, MIN(collected_at) AS first_seen, MAX(collected_at) AS last_seen
+FROM margin_pool_snapshots
+GROUP BY asset
+ORDER BY snapshots DESC
+LIMIT 20;
 ```
 
-Скрипт запитає підтвердження `YES`, бо restore може перезаписати дані.
+## Top pool changes report (research-only)
 
-## 18. Що входить у цей milestone
+Це технічний research-report по змінах Available Pool, не торгові сигнали.
 
-- PostgreSQL у Docker (`docker-compose.yml`, один сервіс `postgres`)
-- SQL schema init (`database/init/001_init.sql`)
-- Локальний Python collector (`--once`, `--loop`)
-- Збір `allAssets`, `available-inventory`, `klines`
-- Розрахунок похідних `pool_metrics`
-- Запис кожного запуску у `collector_runs`
-- Backup/restore PowerShell scripts
+Top decreases:
 
-## 19. Що НЕ входить у цей milestone
+```sql
+SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_decrease, created_at
+FROM pool_metrics
+WHERE previous_available_inventory IS NOT NULL
+ORDER BY pool_decrease DESC, created_at DESC
+LIMIT 20;
+```
 
-- Web dashboard
-- Backend API
-- Telegram
-- Trading API / відкриття угод
-- Автоматичні сигнали
-- AI LONG/SHORT класифікація
-- Coinglass інтеграція
-- Контейнеризація collector-а
+Top recoveries:
 
-## 20. Наступний логічний milestone
+```sql
+SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_recovery, created_at
+FROM pool_metrics
+WHERE previous_available_inventory IS NOT NULL
+ORDER BY pool_recovery DESC, created_at DESC
+LIMIT 20;
+```
 
-- Додати базовий аналітичний шар над зібраними таблицями:
-- batch SQL views для трендів `available_inventory`
-- первинні алерти на різкі зміни `borrow_pressure_proxy`
-- підготовка контракту для майбутнього API (без реалізації API)
+Top absolute percent changes:
 
-## Архітектура MVP
-
-- Локально (VS Code): Python collector у `.venv`
-- Docker: тільки PostgreSQL
-- Дані:
-- `assets`
-- `symbols`
-- `margin_pool_snapshots`
-- `price_klines`
-- `pool_metrics`
-- `collector_runs`
-
-## Нотатки по унікальності snapshot-ів
-
-Для `margin_pool_snapshots` не додано жорсткий unique `(asset, pool_type, binance_update_time)`, щоб не блокувати корисні повторні snapshots, якщо `binance_update_time` не змінюється. Замість цього використовується часовий ряд snapshots і похідні метрики по `collected_at`.
-
-## Порт PostgreSQL
-
-Використано `5432:5432`. Якщо локальний `5432` зайнятий, змініть у `docker-compose.yml` на `5433:5432` і в `.env` встановіть `POSTGRES_PORT=5433`.
-
-## Чи потрібні Binance API key/secret для available-inventory
-
-Так, для `GET /sapi/v1/margin/available-inventory` потрібні ключ/секрет і signed request. Collector це враховує і логікує зрозумілу помилку, якщо ключі відсутні або endpoint недоступний.
+```sql
+SELECT asset, pool_change_percent, available_inventory, previous_available_inventory, created_at
+FROM pool_metrics
+WHERE previous_available_inventory IS NOT NULL
+  AND pool_change_percent IS NOT NULL
+ORDER BY ABS(pool_change_percent) DESC, created_at DESC
+LIMIT 20;
+```
 
 ## Безпека
 
-- Не комітити `.env`, `.venv`, `data/`, backup-и, логи.
-- Не логувати API key/secret.
-- Використовувати лише офіційні Binance endpoints.
-
-## Troubleshooting Binance
-
-- `GET /sapi/v1/margin/allAssets` викликається як чистий MARKET_DATA запит (без `timestamp/signature`).
-- У деяких оточеннях endpoint може повертати `400/401/403/451` (регіон/IP/мережеві обмеження).
-- Якщо `allAssets` недоступний, collector не падає повністю і продовжує збір `price_klines`.
-- `GET /sapi/v1/margin/available-inventory` є USER_DATA endpoint:
-- потрібні `BINANCE_API_KEY` і `BINANCE_API_SECRET`;
-- виконується signed request (`type`, `timestamp`, `recvWindow`, `signature`).
-- Якщо ключів нема, inventory пропускається (`skipped`), але `price_klines` все одно збираються.
-
-Приклад прямої перевірки `allAssets` у PowerShell:
-
-```powershell
-Invoke-WebRequest -Method GET -Uri "https://api.binance.com/sapi/v1/margin/allAssets"
-```
+- Не комітити `.env`, `.venv`, `data/`, backups, logs.
+- Не логувати API secret.
+- Працювати тільки з офіційними Binance endpoints.

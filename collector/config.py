@@ -29,6 +29,11 @@ class Settings:
     kline_interval: str
     collector_interval_seconds: int
     pool_type: str
+    collect_margin_assets: bool
+    price_collection_mode: str
+    scheduler_mode: str
+    alignment_minutes: int
+    collection_delay_seconds: int
 
     @property
     def symbols(self) -> list[str]:
@@ -39,6 +44,9 @@ def load_settings() -> Settings:
     _load_dotenv()
     watchlist_raw = os.getenv("WATCHLIST_ASSETS", "BTC,ETH,ARKM")
     watchlist_assets = [x.strip().upper() for x in watchlist_raw.split(",") if x.strip()]
+    collect_margin_assets = os.getenv("COLLECT_MARGIN_ASSETS", "false").strip().lower() in {"1", "true", "yes", "on"}
+    price_collection_mode = os.getenv("PRICE_COLLECTION_MODE", "scheduled").strip().lower()
+    scheduler_mode = os.getenv("SCHEDULER_MODE", "aligned").strip().lower()
     return Settings(
         postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
         postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -51,5 +59,9 @@ def load_settings() -> Settings:
         kline_interval=os.getenv("KLINE_INTERVAL", "15m"),
         collector_interval_seconds=int(os.getenv("COLLECTOR_INTERVAL_SECONDS", "900")),
         pool_type=os.getenv("POOL_TYPE", "MARGIN").upper(),
+        collect_margin_assets=collect_margin_assets,
+        price_collection_mode=price_collection_mode,
+        scheduler_mode=scheduler_mode,
+        alignment_minutes=int(os.getenv("ALIGNMENT_MINUTES", "15")),
+        collection_delay_seconds=int(os.getenv("COLLECTION_DELAY_SECONDS", "20")),
     )
-
