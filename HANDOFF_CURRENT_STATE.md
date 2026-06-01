@@ -12,22 +12,17 @@
 - Next milestone: Data Collection Hardening v0.2.
 
 ## Latest loop test results
-- Collector loop успішно накопичив Available Inventory snapshots.
-- `COUNT(margin_pool_snapshots)=1242`.
-- `COUNT(pool_metrics)=1242`.
-- Дані накопичились 3 блоками по 414 rows:
-  - `2026-06-01 12:58 UTC` — 414 rows
-  - `2026-06-01 13:03 UTC` — 414 rows
-  - `2026-06-01 13:20 UTC` — 414 rows
-- По кожному asset у вибірці `snapshots=3`, тобто історія накопичується, а не перезаписується.
-- unique constraints не блокують нові snapshots.
-- `pool_metrics` має записи з `previous_available_inventory IS NOT NULL`.
-- Приклади помітних pool decrease:
-  - `GMT`: `pool_change` приблизно `-2,614,974`; `pool_change_percent` приблизно `-39.84%`
-  - `WLD`: `pool_change` приблизно `-70,870`; `pool_change_percent` приблизно `-5.89%`
-  - `NEAR`: `pool_change` приблизно `-4,962`; `pool_change_percent` приблизно `-3.52%`
-  - `XNO`: `pool_change` приблизно `-1,399`; `pool_change_percent` приблизно `-7.02%`
-- Це не торгові сигнали, а лише підтвердження, що метрики зміни Available Pool працюють.
+- Extended loop test підтвердив стабільне накопичення Binance Available Inventory.
+- `COUNT(margin_pool_snapshots)=5796`.
+- `COUNT(pool_metrics)=5796`.
+- Це відповідає 14 циклам по 414 assets: `414 * 14 = 5796`.
+- У `margin_pool_snapshots` видно 14 часових блоків по 414 rows кожен.
+- Перший зафіксований блок: `2026-06-01 12:58 UTC` — 414 rows.
+- Останній зафіксований блок: `2026-06-01 16:32 UTC` — 414 rows.
+- По кожному asset у вибірці `snapshots=14`.
+- Це підтверджує, що snapshots накопичуються, не перезаписуються і unique constraints не блокують нові записи.
+- `pool_metrics` також накопичуються синхронно з snapshots.
+- Local-first Data Core MVP вважаємо підтвердженим.
 
 ## Поточна архітектура
 Local-first MVP:
@@ -71,13 +66,13 @@ Local-first MVP:
 - `run_status=partial_success`, бо `allAssets` повертає 400, але це не блокує inventory та klines.
 
 ## Відоме non-blocking issue
-`GET /sapi/v1/margin/allAssets` повертає HTTP 400:
-`{"code":-2014,"msg":"API-key format invalid."}`
+`GET /sapi/v1/margin/allAssets` продовжує повертати HTTP 400 Binance code `-2014` (`"API-key format invalid"`).
 
 Важливе уточнення:
 - Для `allAssets` public request код не відправляє `X-MBX-APIKEY`, якщо ключ порожній.
 - Діагностика показувала `sent_api_key_header=False` та `signed=False`.
 - Це issue зараз non-blocking, бо основний endpoint `available-inventory` працює.
+- У наступному milestone `allAssets` треба зробити optional/disabled by default, щоб не переводити успішні inventory runs у `partial_success`.
 - Watchlist symbols формуються з `.env`, тому `allAssets` не критичний для поточного MVP.
 
 ## Поточний пріоритет
@@ -175,14 +170,13 @@ LIMIT 20;
 
 ## Наступний milestone
 Data Collection Hardening v0.2:
-- підтвердити, що snapshots накопичуються кожен цикл;
-- перевірити, що unique constraints не блокують нові snapshots;
-- перевірити, що `pool_metrics` правильно використовує попередній snapshot;
-- зробити price collection опціональним через env (наприклад `PRICE_COLLECTION_MODE=disabled/scheduled`);
-- зробити Available Pool основним режимом collector-а;
-- додати SQL health/report command або documented SQL checks;
-- оновити `README.md`;
-- підтримувати `HANDOFF_CURRENT_STATE.md` актуальним.
+1. Зробити `allAssets` optional або disabled by default.
+2. Додати `PRICE_COLLECTION_MODE=disabled/scheduled`.
+3. Зробити Available Pool основним collector режимом.
+4. Додати health/report script або команду для SQL-перевірок.
+5. Додати top pool changes report.
+6. Оновити `README.md`.
+7. Підтримувати `HANDOFF_CURRENT_STATE.md` актуальним.
 
 ## Обмеження та безпека
 - Не змінювати код collector-а в межах цього handoff.
