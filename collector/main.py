@@ -49,6 +49,7 @@ def run_once() -> int:
             LOGGER.warning("assets failed: %s", exc)
 
         snapshots_count = 0
+        snapshots_fetched = 0
         if not settings.binance_api_key or not settings.binance_api_secret:
             problems.append("available-inventory skipped: missing API key/secret")
             LOGGER.warning("available-inventory skipped because Binance API credentials are missing")
@@ -56,7 +57,7 @@ def run_once() -> int:
         else:
             try:
                 inv_payload = client.get_margin_available_inventory(settings.pool_type)
-                snapshots_count = db.insert_margin_snapshots(conn, settings.pool_type, inv_payload)
+                snapshots_count, snapshots_fetched = db.insert_margin_snapshots(conn, settings.pool_type, inv_payload)
                 records_collected += snapshots_count
                 inventory_state = "collected"
             except BinanceAPIError as exc:
@@ -71,7 +72,12 @@ def run_once() -> int:
                 )
                 LOGGER.warning("inventory failed: %s", exc)
                 inventory_state = "failed"
-        LOGGER.info("inventory %s; pool snapshots collected=%s", inventory_state, snapshots_count)
+        LOGGER.info(
+            "inventory %s; inventory fetched=%s inserted=%s",
+            inventory_state,
+            snapshots_fetched,
+            snapshots_count,
+        )
 
         klines_inserted = 0
         klines_fetched = 0

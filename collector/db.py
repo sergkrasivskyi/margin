@@ -13,7 +13,11 @@ from collector.config import Settings
 def _to_dt(ms: int | None) -> datetime | None:
     if ms is None:
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    # Binance endpoints can return epoch seconds or milliseconds.
+    ts = float(ms)
+    if ts < 10_000_000_000:
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
 
 
 def connect(settings: Settings) -> psycopg.Connection:
@@ -113,24 +117,63 @@ def upsert_assets(conn: psycopg.Connection, assets_payload: list[dict]) -> int:
 
 
 def insert_margin_snapshots(conn: psycopg.Connection, pool_type: str, payload: dict) -> int:
-    rows = payload.get("assets", []) if isinstance(payload, dict) else []
+    if not isinstance(payload, dict):
+        raise ValueError(f"available-inventory payload must be dict, got {type(payload).__name__}")
+
+    assets_node = payload.get("assets")
+    update_time = _to_dt(payload.get("updateTime"))
+    parsed_rows: list[tuple[str, Decimal, dict]] = []
+
+    if isinstance(assets_node, dict):
+        for asset, value in assets_node.items():
+            parsed_rows.append(
+                (
+                    str(asset),
+                    Decimal(str(value)),
+                    {"asset": asset, "availableInventory": value, "updateTime": payload.get("updateTime")},
+                )
+            )
+    elif isinstance(assets_node, list):
+        for row in assets_node:
+            if not isinstance(row, dict):
+                continue
+            asset = row.get("asset")
+            if asset is None:
+                continue
+            parsed_rows.append(
+                (
+                    str(asset),
+                    Decimal(str(row.get("availableInventory", "0"))),
+                    row,
+                )
+            )
+    else:
+        payload_keys = list(payload.keys())[:10]
+        raise ValueError(
+            f"Unexpected available-inventory assets structure: assets_type={type(assets_node).__name__}, payload_keys={payload_keys}"
+        )
+
     inserted = 0
     with conn.cursor() as cur:
-        for row in rows:
-            asset = row.get("asset")
-            available_inventory = Decimal(str(row.get("availableInventory", "0")))
-            update_time = _to_dt(row.get("updateTime"))
+        for asset, available_inventory, raw_row in parsed_rows:
             cur.execute(
                 """
                 INSERT INTO margin_pool_snapshots (
                   asset, pool_type, available_inventory, binance_update_time, collected_at, source, raw_json
                 ) VALUES (%s, %s, %s, %s, NOW(), %s, %s::jsonb)
                 """,
-                (asset, pool_type, available_inventory, update_time, "binance:/sapi/v1/margin/available-inventory", json.dumps(row)),
+                (
+                    asset,
+                    pool_type,
+                    available_inventory,
+                    update_time,
+                    "binance_available_inventory",
+                    json.dumps(raw_row),
+                ),
             )
             inserted += 1
     conn.commit()
-    return inserted
+    return inserted, len(parsed_rows)
 
 
 def insert_klines(conn: psycopg.Connection, symbol: str, interval: str, klines: list[list]) -> int:
@@ -226,4 +269,3 @@ def insert_pool_metric(conn: psycopg.Connection, row: dict) -> None:
                 row["repay_or_refill_proxy"],
             ),
         )
-
