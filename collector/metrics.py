@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 
 from collector import db
 
 SpotPriceMap = dict[str, dict[str, Decimal | str]]
+ProgressCallback = Callable[[str, int | None], None]
 
 
 def calculate_and_store_pool_metrics(conn) -> int:
@@ -46,7 +48,11 @@ def calculate_and_store_pool_metrics(conn) -> int:
     return inserted
 
 
-def calculate_and_store_borrow_pressure_metrics(conn, spot_price_map: SpotPriceMap | None = None) -> dict:
+def calculate_and_store_borrow_pressure_metrics(
+    conn,
+    spot_price_map: SpotPriceMap | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     spot_price_map = spot_price_map or {}
     current_snapshot_at = db.fetch_latest_snapshot_timestamp(conn)
     if current_snapshot_at is None:
@@ -75,10 +81,13 @@ def calculate_and_store_borrow_pressure_metrics(conn, spot_price_map: SpotPriceM
     sample_price_matches: list[dict] = []
     calculated_by_timeframe = {timeframe: 0 for timeframe in db.BORROW_PRESSURE_TIMEFRAMES}
 
-    for snap in current_block:
-        current_pool = Decimal(snap["available_inventory"])
+    for timeframe, delta in db.BORROW_PRESSURE_TIMEFRAMES.items():
+        if progress_callback:
+            progress_callback(timeframe, None)
+        timeframe_inserted = 0
 
-        for timeframe, delta in db.BORROW_PRESSURE_TIMEFRAMES.items():
+        for snap in current_block:
+            current_pool = Decimal(snap["available_inventory"])
             previous_snapshot = db.fetch_previous_snapshot_for_timeframe(
                 conn,
                 snap["asset"],
@@ -141,7 +150,11 @@ def calculate_and_store_borrow_pressure_metrics(conn, spot_price_map: SpotPriceM
                 },
             )
             inserted += 1
-            calculated_by_timeframe[timeframe] += 1
+            timeframe_inserted += 1
+
+        calculated_by_timeframe[timeframe] = timeframe_inserted
+        if progress_callback:
+            progress_callback(timeframe, timeframe_inserted)
 
     conn.commit()
     return {

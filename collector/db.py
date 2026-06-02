@@ -38,6 +38,7 @@ def connect(settings: Settings) -> psycopg.Connection:
         password=settings.postgres_password,
         autocommit=False,
         row_factory=dict_row,
+        connect_timeout=5,
     )
 
 

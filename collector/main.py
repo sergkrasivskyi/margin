@@ -63,31 +63,50 @@ def _build_spot_price_map(price_rows: list[dict]) -> dict[str, dict[str, Decimal
     }
 
 
-def _log_health_rankings(conn, timeframe: str, label: str, query: str) -> None:
+def _format_duration_seconds(started_at: datetime | None, finished_at: datetime | None) -> float | None:
+    if started_at is None or finished_at is None:
+        return None
+    return round((finished_at - started_at).total_seconds(), 1)
+
+
+def _log_health_rankings(conn, timeframe: str, label: str, query: str, top_limit: int) -> None:
     with conn.cursor() as cur:
-        cur.execute(query, (timeframe,))
+        cur.execute(query, (timeframe, top_limit))
         LOGGER.info("health_report: %s timeframe=%s", label, timeframe)
         for row in cur.fetchall():
             LOGGER.info("%s: %s", label, row)
 
 
-def _run_health_report(conn) -> None:
+def _run_health_report(conn, verbose: bool = False, top_limit: int = 10) -> None:
     db.ensure_schema(conn)
     timeframes = tuple(db.BORROW_PRESSURE_TIMEFRAMES.keys())
 
     with conn.cursor() as cur:
         LOGGER.info("health_report: research metrics only, not trading signals")
-        LOGGER.info("health_report: last 10 collector_runs")
         cur.execute(
             """
             SELECT collector_name, started_at, finished_at, status, records_collected, error_message
             FROM collector_runs
             ORDER BY started_at DESC
-            LIMIT 10
+            LIMIT %s
             """
+            ,
+            (10 if verbose else 1,),
         )
-        for row in cur.fetchall():
-            LOGGER.info("run: %s", row)
+        run_rows = cur.fetchall()
+        LOGGER.info("health_report: %s", "last 10 collector_runs" if verbose else "last collector_run")
+        for row in run_rows:
+            LOGGER.info(
+                "run: collector_name=%s status=%s started_at=%s finished_at=%s duration_seconds=%s "
+                "records_collected=%s error_message=%s",
+                row["collector_name"],
+                row["status"],
+                row["started_at"],
+                row["finished_at"],
+                _format_duration_seconds(row["started_at"], row["finished_at"]),
+                row["records_collected"],
+                row["error_message"],
+            )
 
         for table_name in (
             "margin_pool_snapshots",
@@ -104,8 +123,10 @@ def _run_health_report(conn) -> None:
             FROM margin_pool_snapshots
             GROUP BY minute
             ORDER BY minute DESC
-            LIMIT 10
+            LIMIT %s
             """
+            ,
+            (10 if verbose else 3,),
         )
         LOGGER.info("health_report: latest snapshot blocks")
         for row in cur.fetchall():
@@ -135,19 +156,34 @@ def _run_health_report(conn) -> None:
 
         cur.execute(
             """
+            WITH latest AS (
+              SELECT timeframe, MAX(calculated_at) AS latest_calculated_at
+              FROM borrow_pressure_metrics
+              WHERE timeframe = ANY(%s)
+              GROUP BY timeframe
+            )
             SELECT
-              timeframe,
+              bpm.timeframe,
               COUNT(*) AS rows,
-              COUNT(*) FILTER (WHERE price_available) AS price_available_rows,
-              COUNT(*) FILTER (WHERE NOT price_available) AS price_unavailable_rows
-            FROM borrow_pressure_metrics
-            GROUP BY timeframe
-            ORDER BY timeframe
+              COUNT(*) FILTER (WHERE bpm.price_available) AS price_available_rows,
+              COUNT(*) FILTER (WHERE NOT bpm.price_available) AS price_unavailable_rows
+            FROM latest l
+            JOIN borrow_pressure_metrics bpm
+              ON bpm.timeframe = l.timeframe
+             AND bpm.calculated_at = l.latest_calculated_at
+            GROUP BY bpm.timeframe
+            ORDER BY bpm.timeframe
             """
+            ,
+            (list(timeframes),),
         )
-        LOGGER.info("health_report: price availability by timeframe")
+        LOGGER.info("health_report: latest price availability by timeframe")
         for row in cur.fetchall():
             LOGGER.info("price_availability: %s", row)
+
+    if not verbose:
+        LOGGER.info("health_report: concise summary complete; use --health-report --verbose for TOP rankings")
+        return
 
     top_borrow_pressure_usdt = """
         SELECT asset, borrow_pressure_usdt, borrow_pressure_units, spot_price_usdt, current_snapshot_at, calculated_at
@@ -156,7 +192,7 @@ def _run_health_report(conn) -> None:
           AND price_available = TRUE
           AND borrow_pressure_usdt IS NOT NULL
         ORDER BY borrow_pressure_usdt DESC, calculated_at DESC, asset
-        LIMIT 10
+        LIMIT %s
     """
     top_borrow_pressure_percent = """
         SELECT asset, borrow_pressure_percent, borrow_pressure_units, previous_available_inventory, current_snapshot_at, calculated_at
@@ -164,7 +200,7 @@ def _run_health_report(conn) -> None:
         WHERE timeframe = %s
           AND borrow_pressure_percent IS NOT NULL
         ORDER BY borrow_pressure_percent DESC, calculated_at DESC, asset
-        LIMIT 10
+        LIMIT %s
     """
     top_recovery_usdt = """
         SELECT asset, recovery_usdt, recovery_units, spot_price_usdt, current_snapshot_at, calculated_at
@@ -173,7 +209,7 @@ def _run_health_report(conn) -> None:
           AND price_available = TRUE
           AND recovery_usdt IS NOT NULL
         ORDER BY recovery_usdt DESC, calculated_at DESC, asset
-        LIMIT 10
+        LIMIT %s
     """
     top_recovery_percent = """
         SELECT asset, recovery_percent, recovery_units, previous_available_inventory, current_snapshot_at, calculated_at
@@ -181,17 +217,21 @@ def _run_health_report(conn) -> None:
         WHERE timeframe = %s
           AND recovery_percent IS NOT NULL
         ORDER BY recovery_percent DESC, calculated_at DESC, asset
-        LIMIT 10
+        LIMIT %s
     """
 
+    LOGGER.info("health_report: verbose TOP rankings top_limit=%s", top_limit)
     for timeframe in timeframes:
-        _log_health_rankings(conn, timeframe, "top_borrow_pressure_usdt", top_borrow_pressure_usdt)
-        _log_health_rankings(conn, timeframe, "top_borrow_pressure_percent", top_borrow_pressure_percent)
-        _log_health_rankings(conn, timeframe, "top_recovery_usdt", top_recovery_usdt)
-        _log_health_rankings(conn, timeframe, "top_recovery_percent", top_recovery_percent)
+        _log_health_rankings(conn, timeframe, "top_borrow_pressure_usdt", top_borrow_pressure_usdt, top_limit)
+        _log_health_rankings(conn, timeframe, "top_borrow_pressure_percent", top_borrow_pressure_percent, top_limit)
+        _log_health_rankings(conn, timeframe, "top_recovery_usdt", top_recovery_usdt, top_limit)
+        _log_health_rankings(conn, timeframe, "top_recovery_percent", top_recovery_percent, top_limit)
 
 
 def run_once() -> int:
+    cycle_started_monotonic = time.monotonic()
+    LOGGER.info("Cycle started")
+    LOGGER.info("Preparing collector cycle...")
     settings = load_settings()
     conn = db.connect(settings)
     db.ensure_schema(conn)
@@ -203,7 +243,6 @@ def run_once() -> int:
     raw_errors: list[dict] = []
 
     try:
-        LOGGER.info("Cycle started")
         symbols_upserted = db.upsert_symbols(conn, settings.watchlist_assets)
         LOGGER.info("symbols upserted=%s", symbols_upserted)
 
@@ -234,11 +273,13 @@ def run_once() -> int:
             inventory_state = "skipped"
         else:
             try:
+                LOGGER.info("Fetching available inventory...")
                 inv_payload = client.get_margin_available_inventory(settings.pool_type)
                 snapshots_count, snapshots_fetched = db.insert_margin_snapshots(conn, settings.pool_type, inv_payload)
                 records_collected += snapshots_count
                 inventory_collected = snapshots_count > 0
                 inventory_state = "collected"
+                LOGGER.info("Available inventory fetched: rows=%s", snapshots_count)
             except BinanceAPIError as exc:
                 critical_problems.append("available-inventory failed")
                 raw_errors.append({"endpoint": "available-inventory", "details": exc.details})
@@ -265,13 +306,14 @@ def run_once() -> int:
             LOGGER.info("spot price collection disabled by SPOT_PRICE_COLLECTION_MODE=disabled")
         elif inventory_collected:
             try:
+                LOGGER.info("Collecting spot prices...")
                 ticker_payload = client.get_spot_ticker_prices()
                 spot_price_rows = _build_direct_usdt_price_rows(ticker_payload)
                 spot_price_map = _build_spot_price_map(spot_price_rows)
                 spot_prices_fetched = len(spot_price_rows)
                 spot_prices_inserted = db.insert_spot_price_snapshots(conn, spot_price_rows)
                 records_collected += spot_prices_inserted
-                LOGGER.info("spot_prices fetched=%s inserted=%s", spot_prices_fetched, spot_prices_inserted)
+                LOGGER.info("Spot prices inserted: rows=%s", spot_prices_inserted)
             except BinanceAPIError as exc:
                 critical_problems.append("spot prices failed")
                 raw_errors.append({"endpoint": "spot-ticker-price", "details": exc.details})
@@ -317,9 +359,10 @@ def run_once() -> int:
         if kline_errors:
             critical_problems.append(f"klines failed for {kline_errors} symbol(s)")
 
+        LOGGER.info("Calculating pool metrics...")
         pool_metrics_count = metrics.calculate_and_store_pool_metrics(conn)
         records_collected += pool_metrics_count
-        LOGGER.info("pool_metrics calculated=%s", pool_metrics_count)
+        LOGGER.info("Pool metrics calculated: rows=%s", pool_metrics_count)
 
         borrow_pressure_summary = {
             "calculated": 0,
@@ -329,17 +372,29 @@ def run_once() -> int:
             "sample_price_matches": [],
         }
         if inventory_collected:
-            borrow_pressure_summary = metrics.calculate_and_store_borrow_pressure_metrics(conn, spot_price_map)
+            def _borrow_pressure_progress(timeframe: str, rows: int | None) -> None:
+                if rows is None:
+                    LOGGER.info("Calculating borrow pressure metrics timeframe=%s...", timeframe)
+                else:
+                    LOGGER.info("Borrow pressure metrics calculated timeframe=%s rows=%s", timeframe, rows)
+
+            borrow_pressure_summary = metrics.calculate_and_store_borrow_pressure_metrics(
+                conn,
+                spot_price_map,
+                progress_callback=_borrow_pressure_progress,
+            )
             records_collected += borrow_pressure_summary["calculated"]
         LOGGER.info(
             "borrow_pressure_metrics calculated=%s calculated_by_timeframe=%s price_available_count=%s "
-            "price_unavailable_count=%s sample_price_matches=%s",
+            "price_unavailable_count=%s sample_price_matches_count=%s",
             borrow_pressure_summary["calculated"],
             borrow_pressure_summary["calculated_by_timeframe"],
             borrow_pressure_summary["price_available_count"],
             borrow_pressure_summary["price_unavailable_count"],
-            borrow_pressure_summary["sample_price_matches"],
+            len(borrow_pressure_summary["sample_price_matches"]),
         )
+        if borrow_pressure_summary["sample_price_matches"]:
+            LOGGER.debug("sample_price_matches=%s", borrow_pressure_summary["sample_price_matches"])
 
         if not critical_problems:
             status = "success"
@@ -358,9 +413,11 @@ def run_once() -> int:
         raw_error_payload = {"errors": raw_errors} if raw_errors else None
 
         db.finish_run(conn, run_id, status, records_collected, error_message, raw_error_payload)
+        duration_seconds = round(time.monotonic() - cycle_started_monotonic, 1)
         LOGGER.info(
-            "Cycle finished: assets=%s inventory=%s spot_prices_inserted=%s klines_fetched=%s klines_inserted=%s "
-            "pool_metrics=%s borrow_pressure_metrics=%s run_status=%s",
+            "Cycle finished: duration_seconds=%s assets=%s inventory=%s spot_prices_inserted=%s "
+            "klines_fetched=%s klines_inserted=%s pool_metrics=%s borrow_pressure_metrics=%s run_status=%s",
+            duration_seconds,
             assets_count,
             inventory_state,
             spot_prices_inserted,
@@ -385,15 +442,18 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--once", action="store_true", help="Run one collection cycle (default)")
     mode.add_argument("--loop", action="store_true", help="Run collection loop")
-    mode.add_argument("--health-report", action="store_true", help="Show DB health and pool change report")
+    mode.add_argument("--health-report", action="store_true", help="Show concise DB health report")
+    mode.add_argument("--health-summary", action="store_true", help="Alias for concise DB health report")
+    parser.add_argument("--verbose", action="store_true", help="Show detailed health diagnostics with TOP rankings")
+    parser.add_argument("--top-limit", type=int, default=10, help="TOP ranking rows per section in verbose health report")
     args = parser.parse_args()
 
     setup_logging()
     settings = load_settings()
-    if args.health_report:
+    if args.health_report or args.health_summary:
         conn = db.connect(settings)
         try:
-            _run_health_report(conn)
+            _run_health_report(conn, verbose=args.verbose, top_limit=max(1, args.top_limit))
             return 0
         finally:
             conn.close()
@@ -408,33 +468,39 @@ def main() -> int:
         settings.alignment_minutes,
         settings.collection_delay_seconds,
     )
-    while True:
-        if settings.scheduler_mode == "aligned":
-            now = datetime.now(timezone.utc)
-            next_run = _next_aligned_run(now, settings.alignment_minutes, settings.collection_delay_seconds)
-            wait_seconds = max(0.0, (next_run - now).total_seconds())
-            LOGGER.info(
-                "scheduler_mode=aligned next_run_at=%s alignment_minutes=%s collection_delay_seconds=%s",
-                next_run.isoformat(),
-                settings.alignment_minutes,
-                settings.collection_delay_seconds,
-            )
-            time.sleep(wait_seconds)
-            actual_started_at = datetime.now(timezone.utc)
-            delay_from_schedule = (actual_started_at - next_run).total_seconds()
-            LOGGER.info(
-                "actual_started_at=%s delay_from_schedule_seconds=%.3f",
-                actual_started_at.isoformat(),
-                delay_from_schedule,
-            )
-            code = run_once()
-        else:
-            code = run_once()
-            LOGGER.info("scheduler_mode=interval sleeping=%s", settings.collector_interval_seconds)
-            time.sleep(settings.collector_interval_seconds)
+    try:
+        while True:
+            if settings.scheduler_mode == "aligned":
+                now = datetime.now(timezone.utc)
+                next_run = _next_aligned_run(now, settings.alignment_minutes, settings.collection_delay_seconds)
+                wait_seconds = max(0.0, (next_run - now).total_seconds())
+                LOGGER.info(
+                    "collector waiting for next aligned run next_run_at=%s wait_seconds=%.1f "
+                    "alignment_minutes=%s collection_delay_seconds=%s",
+                    next_run.isoformat(),
+                    wait_seconds,
+                    settings.alignment_minutes,
+                    settings.collection_delay_seconds,
+                )
+                time.sleep(wait_seconds)
+                actual_started_at = datetime.now(timezone.utc)
+                delay_from_schedule = (actual_started_at - next_run).total_seconds()
+                LOGGER.info(
+                    "collector starting scheduled cycle actual_started_at=%s delay_from_schedule_seconds=%.3f",
+                    actual_started_at.isoformat(),
+                    delay_from_schedule,
+                )
+                code = run_once()
+            else:
+                code = run_once()
+                LOGGER.info("collector waiting for next interval run wait_seconds=%s", settings.collector_interval_seconds)
+                time.sleep(settings.collector_interval_seconds)
 
-        if code != 0:
-            LOGGER.error("Cycle failed in loop mode; continuing")
+            if code != 0:
+                LOGGER.error("Cycle failed in loop mode; continuing")
+    except KeyboardInterrupt:
+        LOGGER.info("collector loop stopped by user")
+        return 0
 
 
 if __name__ == "__main__":

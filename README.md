@@ -43,10 +43,33 @@ Loop mode:
 python -m collector.main --loop
 ```
 
-Health report:
+Stop loop mode with `Ctrl+C`. The collector exits cleanly with a short `collector loop stopped by user` log.
+
+Concise health report:
 
 ```powershell
 python -m collector.main --health-report
+```
+
+Verbose health report with TOP rankings:
+
+```powershell
+python -m collector.main --health-report --verbose
+python -m collector.main --health-report --verbose --top-limit 5
+```
+
+`--health-summary` is an alias for the concise health report:
+
+```powershell
+python -m collector.main --health-summary
+```
+
+Redirect logs to a file while still showing them in PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force .\data\logs
+python -m collector.main --health-report 2>&1 | Tee-Object .\data\logs\health-report-latest.txt
+python -m collector.main --loop 2>&1 | Tee-Object .\data\logs\collector-loop-latest.txt
 ```
 
 ## Configuration
@@ -125,15 +148,14 @@ If history is still missing for `30m`, `1h`, or `4h`, low or zero counts are exp
 
 ## Health report
 
-`python -m collector.main --health-report` now shows:
+`python -m collector.main --health-report` shows a concise summary:
 
 - row counts for `margin_pool_snapshots`, `pool_metrics`, `spot_price_snapshots`, `borrow_pressure_metrics`
-- latest snapshot blocks
+- last collector run with duration
+- latest snapshot blocks, limited by default
 - latest `borrow_pressure_metrics` block per timeframe
-- top Borrow Pressure USDT by timeframe
-- top Borrow Pressure % by timeframe
-- top Recovery USDT by timeframe
-- top Recovery % by timeframe
+- latest price availability by timeframe
+- no TOP rows by default
 
 Expected report shape:
 
@@ -143,6 +165,28 @@ health_report: spot_price_snapshots_count=12345
 health_report: borrow_pressure_metrics_count=6789
 health_report: latest borrow_pressure_metrics blocks by timeframe
 borrow_pressure_block: {'timeframe': '15m', 'latest_calculated_at': ..., 'rows_at_latest': 414}
+health_report: latest price availability by timeframe
+health_report: concise summary complete; use --health-report --verbose for TOP rankings
+```
+
+Verbose report:
+
+```powershell
+python -m collector.main --health-report --verbose --top-limit 5
+```
+
+Verbose mode includes:
+
+- last 10 collector runs
+- latest snapshot blocks
+- top Borrow Pressure USDT by timeframe
+- top Borrow Pressure % by timeframe
+- top Recovery USDT by timeframe
+- top Recovery % by timeframe
+
+Expected verbose TOP shape:
+
+```text
 health_report: top_borrow_pressure_usdt timeframe=15m
 top_borrow_pressure_usdt: {'asset': 'BTC', 'borrow_pressure_usdt': ..., ...}
 health_report: top_borrow_pressure_percent timeframe=15m

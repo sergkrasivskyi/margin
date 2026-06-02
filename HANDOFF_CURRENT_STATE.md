@@ -12,7 +12,63 @@
 - Legacy `pool_metrics` are still calculated per snapshot block.
 - Milestone `v0.3` is now implemented: Spot USDT prices + Derived Borrow Pressure Metrics.
 - Milestone `Backend API Scanner v0.1` is implemented as a read-only FastAPI API.
-- Next milestone: API verification and UI/dashboard planning, if needed.
+- Milestone `Collector UX / Health Report v0.3.1` is implemented.
+- Next milestone: continue scanner/API UX planning if needed.
+
+## Collector UX / Health Report v0.3.1
+
+Files changed:
+
+- `collector/main.py`
+- `collector/db.py`
+- `collector/metrics.py`
+- `README.md`
+- `HANDOFF_CURRENT_STATE.md`
+
+Behavior changed:
+
+- `python -m collector.main --once` now logs visible cycle progress before slow work starts.
+- `Cycle started` is logged at the true beginning of `run_once()`, before settings load, DB connect, schema bootstrap, and collector run creation.
+- Final cycle log includes `duration_seconds`.
+- Normal INFO logs no longer print full `sample_price_matches`; INFO prints `sample_price_matches_count`, and detailed samples are DEBUG-only.
+- Borrow pressure metric calculation logs concise per-timeframe progress:
+  - starting timeframe calculation
+  - rows calculated per timeframe
+- Loop mode waiting log now clearly says the collector is waiting for the next aligned or interval run.
+- Loop mode handles `Ctrl+C` during wait with `collector loop stopped by user` and exits without traceback.
+- `python -m collector.main --health-report` is concise by default and omits TOP rows.
+- `python -m collector.main --health-report --verbose` preserves detailed diagnostic sections and TOP rankings.
+- `--top-limit N` controls verbose TOP ranking rows.
+- `python -m collector.main --health-summary` is an alias for concise health report.
+- Collector PostgreSQL connection now has `connect_timeout=5` to avoid silent terminal hangs when DB connection is unavailable.
+
+Unchanged:
+
+- No old history was deleted.
+- DB schema was not changed.
+- Collector formulas for `pool_metrics` and `borrow_pressure_metrics` were not changed.
+- Binance endpoints were not changed.
+- Scheduler alignment behavior was not changed.
+- API Scanner behavior was not changed.
+- No frontend, Telegram, alerts, borrow, repay, or trading actions were added.
+- `.env`, `.venv/`, `data/`, `backups/`, credentials, tokens, and API keys were not changed.
+
+Known notes:
+
+- Borrow pressure metric insertion order is now timeframe-first so progress can be logged per timeframe; calculated formulas and rows are unchanged.
+- Verbose health reports can still be large if `--top-limit` is high.
+
+Commands run:
+
+- `git status --short` -> clean working tree before changes.
+- `git diff --name-only` -> clean working tree before changes.
+- `python -m compileall api collector database scripts smoke_check.py` -> passed.
+- `python smoke_check.py` -> passed.
+- `python -m collector.main --health-report` -> passed; concise output, no TOP rows by default.
+- `python -m collector.main --health-report --verbose --top-limit 3` -> passed; verbose TOP sections limited to 3 rows.
+- `python -m collector.main --once` -> passed with visible progress logs and final `duration_seconds`.
+- Synthetic loop wait `KeyboardInterrupt` test -> passed; logs `collector loop stopped by user` and exits without traceback.
+- `python -m collector.main --health-summary` -> passed; same concise output as `--health-report`.
 
 ## v0.3 changes
 
@@ -123,21 +179,6 @@ Limitations:
 - No pagination cursor yet; endpoints use bounded `limit` query params.
 - No frontend/UI yet.
 
-Commands run:
-
-- `git status --short` -> clean working tree before changes.
-- `git diff --name-only` -> clean working tree before changes.
-- `pip install -r collector\requirements.txt` -> installed FastAPI/Uvicorn dependencies.
-- `python -m compileall .` -> passed.
-- `python smoke_check.py` -> passed.
-- FastAPI `TestClient` runtime checks against local PostgreSQL -> passed for:
-  - `/health`
-  - `/api/overview`
-  - `/api/scanner/latest?tf=15m&metric=borrow_pressure_usdt&limit=5`
-  - `/api/assets?limit=5`
-  - `/api/assets/BTC/metrics-history?tf=15m&limit=5`
-  - `/api/assets/BTC/pool-history?limit=5`
-
 ## New tables
 
 ### `spot_price_snapshots`
@@ -206,7 +247,7 @@ Related existing env:
 - Local Python collector from `.venv`
 - PostgreSQL in Docker
 - No web dashboard
-- No backend API yet
+- Read-only FastAPI backend API is available
 - No Telegram integration
 - No trading / borrow / repay actions
 
