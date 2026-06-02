@@ -14,7 +14,15 @@
 - Milestone `Backend API Scanner v0.1` is implemented as a read-only FastAPI API.
 - Milestone `Collector UX / Health Report v0.3.1` is implemented.
 - Milestone `Backend API Scanner v0.1.1` is implemented.
+- Repo-level `AGENTS.md` project instructions are added for future Codex work.
 - Next milestone: continue scanner/API UX planning if needed.
+
+## AGENTS.md project instructions
+
+- Added repo-level `AGENTS.md` to keep stable project rules available across future Codex prompts.
+- Covers project overview, architecture, safety rules, git pre-checks, verification commands, documentation expectations, and final response expectations.
+- This was a docs/instructions-only update.
+- No application code, collector logic, API behavior, DB schema, `.env`, secrets, `.venv/`, `data/`, or backups were changed.
 
 ## Backend API Scanner v0.1.1
 
