@@ -13,7 +13,87 @@
 - Milestone `v0.3` is now implemented: Spot USDT prices + Derived Borrow Pressure Metrics.
 - Milestone `Backend API Scanner v0.1` is implemented as a read-only FastAPI API.
 - Milestone `Collector UX / Health Report v0.3.1` is implemented.
+- Milestone `Backend API Scanner v0.1.1` is implemented.
 - Next milestone: continue scanner/API UX planning if needed.
+
+## Backend API Scanner v0.1.1
+
+Changed files:
+
+- `api/main.py`
+- `api/scanner.py`
+- `api/schemas.py`
+- `api/settings.py`
+- `smoke_check.py`
+- `README.md`
+- `HANDOFF_CURRENT_STATE.md`
+
+Endpoints changed or added:
+
+- Added `GET /api/scanner/summary`.
+- Updated `GET /api/overview` with `data_freshness`.
+- Updated `GET /api/scanner/latest` with `data_freshness`.
+- Kept `GET /health` lightweight.
+
+Scanner summary behavior:
+
+- Query params: `tf=15m`, `limit=20`, `exclude_stables=true`.
+- Supported timeframes: `15m`, `30m`, `1h`, `4h`.
+- Returns all four latest-block rankings in one response:
+  - `top_borrow_pressure_usdt`
+  - `top_borrow_pressure_percent`
+  - `top_recovery_usdt`
+  - `top_recovery_percent`
+- Ranking items use the same DTO fields as `GET /api/scanner/latest`.
+- Ranking logic reuses the same helper as `GET /api/scanner/latest`.
+
+Data freshness behavior:
+
+- Freshness fields:
+  - `latest_metrics_calculated_at`
+  - `latest_metrics_age_seconds`
+  - `latest_snapshot_at`
+  - `latest_snapshot_age_seconds`
+  - `last_collector_run_status`
+  - `last_collector_run_finished_at`
+  - `is_data_stale`
+  - `stale_after_seconds`
+- Default stale threshold: `stale_after_seconds=1800`.
+- Freshness uses UTC now and latest metrics/snapshot/collector run.
+- Old historical data does not make the API stale by itself.
+
+Validation and edge cases:
+
+- Scanner endpoints use `limit` min `1`, max `100`.
+- Asset history endpoints use `limit` min `1`, max `100`.
+- Invalid `tf` and `metric` return validation errors.
+- Unknown asset history endpoints return `200` with empty `items`.
+- Scanner endpoints return `200` with empty items/rankings and `calculated_at=null` when no latest block exists.
+
+Unchanged:
+
+- API remains read-only.
+- No old history was deleted or truncated.
+- DB schema was not changed.
+- Collector formulas were not changed.
+- Binance endpoints were not changed.
+- Scheduler alignment behavior was not changed.
+- Data Core calculations were not changed.
+- No frontend, Telegram, alerts, AI classification, z-score, anomaly score, Coinglass, borrow, repay, or trading actions were added.
+- `.env`, `.venv/`, `data/`, `backups/`, credentials, tokens, and API keys were not changed.
+
+Commands run:
+
+- `git log --oneline --decorate -5` -> latest commit before changes: `82a4669 Improve collector UX and health report`.
+- `git status --short` -> clean working tree before changes.
+- `git diff --name-only` -> clean working tree before changes.
+- `python -m compileall api collector database scripts smoke_check.py` -> passed.
+- `python smoke_check.py` -> passed; covers all API endpoints and invalid `tf` / invalid `metric`.
+
+Known notes:
+
+- `smoke_check.py` now performs FastAPI `TestClient` requests and requires local PostgreSQL for API endpoints beyond `/health`.
+- FastAPI TestClient emits a Starlette deprecation warning about `httpx`; checks still pass.
 
 ## Collector UX / Health Report v0.3.1
 

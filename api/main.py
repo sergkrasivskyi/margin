@@ -11,6 +11,7 @@ from api.schemas import (
     OverviewResponse,
     PoolHistoryResponse,
     ScannerLatestResponse,
+    ScannerSummaryResponse,
     StableFilterConfig,
 )
 from api.settings import (
@@ -56,6 +57,7 @@ def overview() -> OverviewResponse:
         payload = scanner.fetch_overview(conn)
     return OverviewResponse(
         latest_metrics_calculated_at=payload["latest_metrics_calculated_at"],
+        data_freshness=payload["data_freshness"],
         overview=payload["overview"],
         stable_filter_config=StableFilterConfig(
             default_exclude_stables=DEFAULT_EXCLUDE_STABLES,
@@ -68,7 +70,7 @@ def overview() -> OverviewResponse:
 def scanner_latest(
     tf: str = Query(default="15m", description="One of 15m, 30m, 1h, 4h"),
     metric: str = Query(default="borrow_pressure_usdt", description=", ".join(SUPPORTED_METRICS)),
-    limit: int = Query(default=20, ge=1, le=500),
+    limit: int = Query(default=20, ge=1, le=100),
     exclude_stables: bool = Query(default=True),
 ) -> ScannerLatestResponse:
     valid_tf = scanner.validate_timeframe(tf)
@@ -77,6 +79,19 @@ def scanner_latest(
     with db.connect(settings) as conn:
         payload = scanner.fetch_scanner_latest(conn, valid_tf, valid_metric, limit, exclude_stables)
     return ScannerLatestResponse(**payload)
+
+
+@app.get("/api/scanner/summary", response_model=ScannerSummaryResponse)
+def scanner_summary(
+    tf: str = Query(default="15m", description="One of 15m, 30m, 1h, 4h"),
+    limit: int = Query(default=20, ge=1, le=100),
+    exclude_stables: bool = Query(default=True),
+) -> ScannerSummaryResponse:
+    valid_tf = scanner.validate_timeframe(tf)
+    settings = load_settings()
+    with db.connect(settings) as conn:
+        payload = scanner.fetch_scanner_summary(conn, valid_tf, limit, exclude_stables)
+    return ScannerSummaryResponse(**payload)
 
 
 @app.get("/api/assets", response_model=AssetsResponse)
@@ -95,7 +110,7 @@ def assets(
 def asset_metrics_history(
     asset: str,
     tf: str = Query(default="15m", description="One of 15m, 30m, 1h, 4h"),
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=100),
 ) -> MetricsHistoryResponse:
     valid_tf = scanner.validate_timeframe(tf)
     normalized_asset = scanner.normalize_asset(asset)
@@ -108,7 +123,7 @@ def asset_metrics_history(
 @app.get("/api/assets/{asset}/pool-history", response_model=PoolHistoryResponse)
 def asset_pool_history(
     asset: str,
-    limit: int = Query(default=500, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=100),
 ) -> PoolHistoryResponse:
     normalized_asset = scanner.normalize_asset(asset)
     settings = load_settings()

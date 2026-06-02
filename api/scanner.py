@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
 from fastapi import HTTPException
 
 from api.schemas import decimal_to_str, datetime_to_utc_iso
-from api.settings import STABLE_ASSETS, SUPPORTED_METRICS, SUPPORTED_TIMEFRAMES
+from api.settings import STALE_AFTER_SECONDS, STABLE_ASSETS, SUPPORTED_METRICS, SUPPORTED_TIMEFRAMES
 
 METRIC_ORDERING = {
     "borrow_pressure_usdt": (
@@ -90,6 +91,53 @@ def fetch_latest_calculated_at(conn: psycopg.Connection, tf: str) -> Any:
         return row["calculated_at"] if row else None
 
 
+def _age_seconds(now_utc: datetime, value: Any) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return max(0, int((now_utc - value.astimezone(timezone.utc)).total_seconds()))
+
+
+def fetch_data_freshness(conn: psycopg.Connection) -> dict:
+    now_utc = datetime.now(timezone.utc)
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(calculated_at) AS calculated_at FROM borrow_pressure_metrics")
+        latest_metrics_calculated_at = cur.fetchone()["calculated_at"]
+
+        cur.execute("SELECT MAX(collected_at) AS snapshot_at FROM margin_pool_snapshots")
+        latest_snapshot_at = cur.fetchone()["snapshot_at"]
+
+        cur.execute(
+            """
+            SELECT status, finished_at
+            FROM collector_runs
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        )
+        run_row = cur.fetchone()
+
+    latest_metrics_age_seconds = _age_seconds(now_utc, latest_metrics_calculated_at)
+    latest_snapshot_age_seconds = _age_seconds(now_utc, latest_snapshot_at)
+    is_data_stale = (
+        latest_metrics_age_seconds is None
+        or latest_snapshot_age_seconds is None
+        or latest_metrics_age_seconds > STALE_AFTER_SECONDS
+        or latest_snapshot_age_seconds > STALE_AFTER_SECONDS
+    )
+    return {
+        "latest_metrics_calculated_at": datetime_to_utc_iso(latest_metrics_calculated_at),
+        "latest_metrics_age_seconds": latest_metrics_age_seconds,
+        "latest_snapshot_at": datetime_to_utc_iso(latest_snapshot_at),
+        "latest_snapshot_age_seconds": latest_snapshot_age_seconds,
+        "last_collector_run_status": run_row["status"] if run_row else None,
+        "last_collector_run_finished_at": datetime_to_utc_iso(run_row["finished_at"]) if run_row else None,
+        "is_data_stale": is_data_stale,
+        "stale_after_seconds": STALE_AFTER_SECONDS,
+    }
+
+
 def fetch_overview(conn: psycopg.Connection) -> dict:
     with conn.cursor() as cur:
         cur.execute("SELECT MAX(calculated_at) AS calculated_at FROM borrow_pressure_metrics")
@@ -125,28 +173,19 @@ def fetch_overview(conn: psycopg.Connection) -> dict:
         ]
     return {
         "latest_metrics_calculated_at": datetime_to_utc_iso(latest),
+        "data_freshness": fetch_data_freshness(conn),
         "overview": overview,
     }
 
 
-def fetch_scanner_latest(
+def fetch_scanner_items(
     conn: psycopg.Connection,
     tf: str,
     metric: str,
     limit: int,
     exclude_stables: bool,
-) -> dict:
-    calculated_at = fetch_latest_calculated_at(conn, tf)
-    if calculated_at is None:
-        return {
-            "tf": tf,
-            "metric": metric,
-            "limit": limit,
-            "exclude_stables": exclude_stables,
-            "calculated_at": None,
-            "items": [],
-        }
-
+    calculated_at: Any,
+) -> list[dict]:
     where_metric, order_by = METRIC_ORDERING[metric]
     stable_sql, stable_params = _stable_filter_sql(exclude_stables)
     params: list[Any] = [tf, calculated_at, *stable_params, limit]
@@ -169,14 +208,77 @@ def fetch_scanner_latest(
             """,
             params,
         )
-        items = [_scanner_item(row) for row in cur.fetchall()]
+        return [_scanner_item(row) for row in cur.fetchall()]
+
+
+def fetch_scanner_latest(
+    conn: psycopg.Connection,
+    tf: str,
+    metric: str,
+    limit: int,
+    exclude_stables: bool,
+) -> dict:
+    calculated_at = fetch_latest_calculated_at(conn, tf)
+    data_freshness = fetch_data_freshness(conn)
+    if calculated_at is None:
+        return {
+            "tf": tf,
+            "metric": metric,
+            "limit": limit,
+            "exclude_stables": exclude_stables,
+            "calculated_at": None,
+            "data_freshness": data_freshness,
+            "items": [],
+        }
+
     return {
         "tf": tf,
         "metric": metric,
         "limit": limit,
         "exclude_stables": exclude_stables,
         "calculated_at": datetime_to_utc_iso(calculated_at),
-        "items": items,
+        "data_freshness": data_freshness,
+        "items": fetch_scanner_items(conn, tf, metric, limit, exclude_stables, calculated_at),
+    }
+
+
+def fetch_scanner_summary(conn: psycopg.Connection, tf: str, limit: int, exclude_stables: bool) -> dict:
+    calculated_at = fetch_latest_calculated_at(conn, tf)
+    data_freshness = fetch_data_freshness(conn)
+    empty_rankings = {
+        "top_borrow_pressure_usdt": [],
+        "top_borrow_pressure_percent": [],
+        "top_recovery_usdt": [],
+        "top_recovery_percent": [],
+    }
+    if calculated_at is None:
+        return {
+            "tf": tf,
+            "limit": limit,
+            "exclude_stables": exclude_stables,
+            "calculated_at": None,
+            "data_freshness": data_freshness,
+            "rankings": empty_rankings,
+        }
+
+    return {
+        "tf": tf,
+        "limit": limit,
+        "exclude_stables": exclude_stables,
+        "calculated_at": datetime_to_utc_iso(calculated_at),
+        "data_freshness": data_freshness,
+        "rankings": {
+            "top_borrow_pressure_usdt": fetch_scanner_items(
+                conn, tf, "borrow_pressure_usdt", limit, exclude_stables, calculated_at
+            ),
+            "top_borrow_pressure_percent": fetch_scanner_items(
+                conn, tf, "borrow_pressure_percent", limit, exclude_stables, calculated_at
+            ),
+            "top_recovery_usdt": fetch_scanner_items(conn, tf, "recovery_usdt", limit, exclude_stables, calculated_at),
+            "top_recovery_percent": fetch_scanner_items(
+                conn, tf, "recovery_percent", limit, exclude_stables, calculated_at
+            ),
+        },
     }
 
 

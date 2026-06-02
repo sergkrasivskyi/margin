@@ -12,6 +12,7 @@ SUPPORTED_METRICS = (
 )
 STABLE_ASSETS = ("USDT", "USDC", "FDUSD", "TUSD", "DAI", "USTC")
 DEFAULT_EXCLUDE_STABLES = True
+STALE_AFTER_SECONDS = 1800
 
 
 def _load_dotenv(path: str = ".env") -> None:
@@ -34,7 +35,7 @@ class ApiSettings:
     postgres_user: str
     postgres_password: str
     service_name: str = "margin-loan-api"
-    version: str = "0.1.0"
+    version: str = "0.1.1"
 
 
 def load_settings() -> ApiSettings:

@@ -49,8 +49,20 @@ class StableFilterConfig(BaseModel):
     stable_assets: list[str]
 
 
+class DataFreshness(BaseModel):
+    latest_metrics_calculated_at: str | None
+    latest_metrics_age_seconds: int | None
+    latest_snapshot_at: str | None
+    latest_snapshot_age_seconds: int | None
+    last_collector_run_status: str | None
+    last_collector_run_finished_at: str | None
+    is_data_stale: bool
+    stale_after_seconds: int
+
+
 class OverviewResponse(BaseModel):
     latest_metrics_calculated_at: str | None
+    data_freshness: DataFreshness
     overview: list[TimeframeOverview]
     stable_filter_config: StableFilterConfig
 
@@ -80,7 +92,24 @@ class ScannerLatestResponse(BaseModel):
     limit: int
     exclude_stables: bool
     calculated_at: str | None
+    data_freshness: DataFreshness
     items: list[ScannerItem]
+
+
+class ScannerSummaryRankings(BaseModel):
+    top_borrow_pressure_usdt: list[ScannerItem]
+    top_borrow_pressure_percent: list[ScannerItem]
+    top_recovery_usdt: list[ScannerItem]
+    top_recovery_percent: list[ScannerItem]
+
+
+class ScannerSummaryResponse(BaseModel):
+    tf: str
+    limit: int
+    exclude_stables: bool
+    calculated_at: str | None
+    data_freshness: DataFreshness
+    rankings: ScannerSummaryRankings
 
 
 class AssetState(BaseModel):

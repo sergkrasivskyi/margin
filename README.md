@@ -215,6 +215,7 @@ Endpoints:
 - `GET /health`
 - `GET /api/overview`
 - `GET /api/scanner/latest`
+- `GET /api/scanner/summary`
 - `GET /api/assets`
 - `GET /api/assets/{asset}/metrics-history`
 - `GET /api/assets/{asset}/pool-history`
@@ -226,9 +227,10 @@ curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/api/overview
 curl "http://127.0.0.1:8000/api/scanner/latest?tf=15m&metric=borrow_pressure_usdt&limit=20&exclude_stables=true"
 curl "http://127.0.0.1:8000/api/scanner/latest?tf=1h&metric=borrow_pressure_percent&limit=20"
+curl "http://127.0.0.1:8000/api/scanner/summary?tf=15m&limit=20&exclude_stables=true"
 curl "http://127.0.0.1:8000/api/assets?exclude_stables=false&limit=500"
-curl "http://127.0.0.1:8000/api/assets/BTC/metrics-history?tf=15m&limit=200"
-curl "http://127.0.0.1:8000/api/assets/BTC/pool-history?limit=500"
+curl "http://127.0.0.1:8000/api/assets/BTC/metrics-history?tf=15m&limit=100"
+curl "http://127.0.0.1:8000/api/assets/BTC/pool-history?limit=100"
 ```
 
 Scanner defaults:
@@ -238,6 +240,16 @@ Scanner defaults:
 - `limit=20`
 - `exclude_stables=true`
 
+Scanner summary:
+
+- `GET /api/scanner/summary`
+- Returns all four latest-block rankings in one response:
+  - `top_borrow_pressure_usdt`
+  - `top_borrow_pressure_percent`
+  - `top_recovery_usdt`
+  - `top_recovery_percent`
+- Uses the same ranking rules and item DTO as `GET /api/scanner/latest`.
+
 Supported scanner metrics:
 
 - `borrow_pressure_usdt`
@@ -246,6 +258,28 @@ Supported scanner metrics:
 - `recovery_percent`
 
 The scanner ranks only the latest calculated block for the selected timeframe. Stable assets excluded by default in scanner responses: `USDT`, `USDC`, `FDUSD`, `TUSD`, `DAI`, `USTC`.
+
+API limit rules:
+
+- Scanner endpoints: `limit` default `20`, min `1`, max `100`.
+- Asset history endpoints: `limit` default `100`, min `1`, max `100`.
+- Asset list endpoint: `limit` default `500`, min `1`, max `1000`.
+
+Data freshness:
+
+- `GET /api/overview`, `GET /api/scanner/latest`, and `GET /api/scanner/summary` include `data_freshness`.
+- Freshness is based on the latest metrics block, latest pool snapshot, and latest collector run.
+- Historical rows do not make data stale by themselves.
+- Default `stale_after_seconds=1800`.
+- Freshness fields:
+  - `latest_metrics_calculated_at`
+  - `latest_metrics_age_seconds`
+  - `latest_snapshot_at`
+  - `latest_snapshot_age_seconds`
+  - `last_collector_run_status`
+  - `last_collector_run_finished_at`
+  - `is_data_stale`
+  - `stale_after_seconds`
 
 JSON rules:
 
