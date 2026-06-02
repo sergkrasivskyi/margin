@@ -113,3 +113,7 @@ class BinanceClient:
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         data = self._request("GET", "/api/v3/klines", params=params, signed=False)
         return data if isinstance(data, list) else []
+
+    def get_spot_ticker_prices(self) -> list[dict]:
+        data = self._request("GET", "/api/v3/ticker/price", signed=False)
+        return data if isinstance(data, list) else []

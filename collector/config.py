@@ -31,6 +31,7 @@ class Settings:
     pool_type: str
     collect_margin_assets: bool
     price_collection_mode: str
+    spot_price_collection_mode: str
     scheduler_mode: str
     alignment_minutes: int
     collection_delay_seconds: int
@@ -46,6 +47,7 @@ def load_settings() -> Settings:
     watchlist_assets = [x.strip().upper() for x in watchlist_raw.split(",") if x.strip()]
     collect_margin_assets = os.getenv("COLLECT_MARGIN_ASSETS", "false").strip().lower() in {"1", "true", "yes", "on"}
     price_collection_mode = os.getenv("PRICE_COLLECTION_MODE", "scheduled").strip().lower()
+    spot_price_collection_mode = os.getenv("SPOT_PRICE_COLLECTION_MODE", "scheduled").strip().lower()
     scheduler_mode = os.getenv("SCHEDULER_MODE", "aligned").strip().lower()
     return Settings(
         postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
@@ -61,6 +63,7 @@ def load_settings() -> Settings:
         pool_type=os.getenv("POOL_TYPE", "MARGIN").upper(),
         collect_margin_assets=collect_margin_assets,
         price_collection_mode=price_collection_mode,
+        spot_price_collection_mode=spot_price_collection_mode,
         scheduler_mode=scheduler_mode,
         alignment_minutes=int(os.getenv("ALIGNMENT_MINUTES", "15")),
         collection_delay_seconds=int(os.getenv("COLLECTION_DELAY_SECONDS", "20")),

@@ -1,217 +1,203 @@
 # HANDOFF CURRENT STATE
 
-## Проєкт
-- Назва: `margin-loan-research`
-- Шлях: `C:\Projects\margin-loan-research`
+## Project
+
+- Name: `margin-loan-research`
+- Path: `C:\Projects\margin-loan-research`
 
 ## Current status
+
 - Local-first Data Core MVP is working.
-- Binance available-inventory is collected cyclically.
-- `margin_pool_snapshots` and `pool_metrics` accumulate over time.
-- `allAssets` 400 remains non-blocking and can be disabled by default via env.
-- Next milestone: Data Collection Hardening v0.2.
+- Binance `available-inventory` snapshots are collected into `margin_pool_snapshots`.
+- Legacy `pool_metrics` are still calculated per snapshot block.
+- Milestone `v0.3` is now implemented: Spot USDT prices + Derived Borrow Pressure Metrics.
+- Next milestone: `Backend API Scanner v0.1`.
 
-## Data Collection Hardening v0.2 changes
-- Added `COLLECT_MARGIN_ASSETS` flag (default `false`):
-  - when `false`, `/sapi/v1/margin/allAssets` is not called;
-  - this prevents `partial_success` caused only by non-critical allAssets errors.
-- Added `PRICE_COLLECTION_MODE`:
-  - `disabled` -> skip klines collection without error;
-  - `scheduled` -> keep current klines behavior.
-- Added scheduler modes:
-  - `SCHEDULER_MODE=interval` (legacy behavior)
-  - `SCHEDULER_MODE=aligned` (time-grid scheduling)
-- Added aligned scheduler parameters:
-  - `ALIGNMENT_MINUTES`
-  - `COLLECTION_DELAY_SECONDS`
-- Added health/report CLI:
-  - `python -m collector.main --health-report`
-  - prints DB health and top pool changes reports.
+## v0.3 changes
 
-## New env parameters (no secrets)
+- Added direct spot USDT price collection from Binance public spot endpoint:
+  - `GET /api/v3/ticker/price`
+- Added table `spot_price_snapshots`.
+- Added table `borrow_pressure_metrics`.
+- Added runtime schema bootstrap in the collector so new tables are created on existing databases without rebuilding the container.
+- Added collector integration to:
+  1. collect inventory
+  2. collect direct spot `ASSETUSDT` prices when enabled
+  3. calculate borrow-pressure metrics for `15m`, `30m`, `1h`, `4h`
+- Added `--health-report` output for:
+  - `spot_price_snapshots`
+  - `borrow_pressure_metrics`
+  - latest blocks by timeframe
+  - top Borrow Pressure USDT / %
+  - top Recovery USDT / %
+
+## v0.3 verified
+
+- `python -m collector.main --once` completed successfully.
+- `inventory fetched=414 inserted=414`.
+- `spot_prices fetched=664 inserted=664`.
+- `borrow_pressure_metrics calculated=1656`.
+- Latest calculated block:
+  - `15m`: 414 rows, 413 price_available, 1 price_unavailable.
+  - `30m`: 414 rows, 413 price_available, 1 price_unavailable.
+  - `1h`: 414 rows, 413 price_available, 1 price_unavailable.
+  - `4h`: 414 rows, 413 price_available, 1 price_unavailable.
+- The only asset without a direct spot price is `USDT`.
+- Top Borrow Pressure USDT now returns rows.
+- Example top `15m` Borrow Pressure USDT:
+  - `USDC` approximately 2.61M USDT.
+  - `XRP` approximately 571K USDT.
+  - `BTC` approximately 514K USDT.
+  - `TON` approximately 446K USDT.
+  - `ETH` approximately 276K USDT.
+- USDT valuation uses only direct spot `ASSETUSDT` prices.
+- Futures prices are not used.
+- Synthetic prices and indirect conversion are not used.
+- Scanner note: stablecoins can appear in TOP results, so Backend/API/UI should support excluding stablecoins.
+- Next milestone: `Backend API Scanner v0.1`.
+
+## New tables
+
+### `spot_price_snapshots`
+
+- Stores direct spot `ASSETUSDT` prices only.
+- Important fields:
+  - `asset`
+  - `symbol`
+  - `price_usdt`
+  - `collected_at`
+  - `source`
+  - `raw_json`
+
+### `borrow_pressure_metrics`
+
+- Stores derived research metrics for:
+  - `15m`
+  - `30m`
+  - `1h`
+  - `4h`
+- Important fields:
+  - `current_available_inventory`
+  - `previous_available_inventory`
+  - `net_pool_change_units`
+  - `net_pool_change_percent`
+  - `borrow_pressure_units`
+  - `borrow_pressure_percent`
+  - `borrow_pressure_usdt`
+  - `recovery_units`
+  - `recovery_percent`
+  - `recovery_usdt`
+  - `spot_price_usdt`
+  - `price_symbol`
+  - `price_available`
+  - `current_snapshot_at`
+  - `previous_snapshot_at`
+  - `calculated_at`
+
+## Borrow-pressure valuation rules
+
+- Borrow pressure is inferred from a drop in available inventory.
+- Recovery is inferred from a rise in available inventory.
+- USDT valuation uses only direct spot `ASSETUSDT` prices.
+- Futures prices are not used.
+- Synthetic or indirect conversion is not used.
+- If a direct spot pair is missing:
+  - `price_available=false`
+  - `borrow_pressure_usdt=NULL`
+  - `recovery_usdt=NULL`
+  - percent metrics can still exist
+
+## New env
+
+- `SPOT_PRICE_COLLECTION_MODE=scheduled`
+
+Related existing env:
+
 - `COLLECT_MARGIN_ASSETS=false`
 - `PRICE_COLLECTION_MODE=scheduled`
 - `SCHEDULER_MODE=aligned`
 - `ALIGNMENT_MINUTES=15`
 - `COLLECTION_DELAY_SECONDS=20`
 
-## Latest loop test results
-- Extended loop test підтвердив стабільне накопичення Binance Available Inventory.
-- `COUNT(margin_pool_snapshots)=5796`.
-- `COUNT(pool_metrics)=5796`.
-- Це відповідає 14 циклам по 414 assets: `414 * 14 = 5796`.
-- У `margin_pool_snapshots` видно 14 часових блоків по 414 rows кожен.
-- Перший зафіксований блок: `2026-06-01 12:58 UTC` — 414 rows.
-- Останній зафіксований блок: `2026-06-01 16:32 UTC` — 414 rows.
-- По кожному asset у вибірці `snapshots=14`.
-- Це підтверджує, що snapshots накопичуються, не перезаписуються і unique constraints не блокують нові записи.
-- `pool_metrics` також накопичуються синхронно з snapshots.
-- Local-first Data Core MVP вважаємо підтвердженим.
+## Current architecture
 
-## Поточна архітектура
-Local-first MVP:
-- Python collector запускається локально у VS Code через `.venv`.
-- PostgreSQL працює у Docker.
-- Web dashboard ще не реалізований.
-- Backend API ще не реалізований.
-- Telegram ще не реалізований.
-- Trading / borrow / repay дій немає і не повинно бути.
-- Основна цінність collector-а: збір Binance Margin Available Inventory / Available Pool.
-- Price klines збираються як допоміжний кеш, не як головна цінність MVP.
+- Local Python collector from `.venv`
+- PostgreSQL in Docker
+- No web dashboard
+- No backend API yet
+- No Telegram integration
+- No trading / borrow / repay actions
 
-## Поточні робочі компоненти
-- `.venv` створений і працює.
-- PostgreSQL Docker container працює.
-- Таблиці створені:
-  - `assets`
-  - `symbols`
-  - `margin_pool_snapshots`
-  - `price_klines`
-  - `pool_metrics`
-  - `collector_runs`
-- `symbols` створюються з `WATCHLIST_ASSETS`.
-- `price_klines` збираються.
-- Binance `available-inventory` signed request працює після додавання `BINANCE_API_KEY/BINANCE_API_SECRET` у локальний `.env`.
-- `margin_pool_snapshots` заповнюється.
-- `pool_metrics` рахується.
-- Collector не падає через помилки margin endpoint-ів, а записує `partial_success`.
+## Operational commands
 
-## Останні підтверджені результати
-- `inventory fetched=414 inserted=414`
-- `pool_metrics calculated=414`
-- `COUNT(margin_pool_snapshots)=414`
-- `COUNT(pool_metrics)=414`
-- `price_klines` також заповнюється.
-- Для першого snapshot у `pool_metrics`:
-  - `previous_available_inventory = NULL`
-  - `pool_change = NULL`
-  - `pool_change_percent = NULL`
-  - це прийнято як коректна поведінка першого спостереження.
-- `run_status=partial_success`, бо `allAssets` повертає 400, але це не блокує inventory та klines.
-
-## Відоме non-blocking issue
-`GET /sapi/v1/margin/allAssets` продовжує повертати HTTP 400 Binance code `-2014` (`"API-key format invalid"`).
-
-Важливе уточнення:
-- Для `allAssets` public request код не відправляє `X-MBX-APIKEY`, якщо ключ порожній.
-- Діагностика показувала `sent_api_key_header=False` та `signed=False`.
-- Це issue зараз non-blocking, бо основний endpoint `available-inventory` працює.
-- У наступному milestone `allAssets` треба зробити optional/disabled by default, щоб не переводити успішні inventory runs у `partial_success`.
-- Watchlist symbols формуються з `.env`, тому `allAssets` не критичний для поточного MVP.
-
-## Поточний пріоритет
-Дати collector-у попрацювати в loop mode для перевірки накопичення `margin_pool_snapshots` блоками кожні 15 хвилин.
-
-## Loop режим
-- Команда: `python -m collector.main --loop`
-- Інтервал: `COLLECTOR_INTERVAL_SECONDS=900`
-- Один цикл кожні 15 хвилин.
-
-## Операційні команди
 Activate venv:
+
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
 Start PostgreSQL:
+
 ```powershell
 docker compose up -d postgres
 ```
 
-Run one collector cycle:
+Run one cycle:
+
 ```powershell
 python -m collector.main --once
 ```
 
-Run collector loop:
+Run loop:
+
 ```powershell
 python -m collector.main --loop
 ```
 
-Run health/report:
+Run health report:
+
 ```powershell
 python -m collector.main --health-report
 ```
 
 Open psql:
+
 ```powershell
 docker compose exec postgres psql -U margin_user -d margin_research
 ```
 
-Disable psql pager:
-```sql
-\pset pager off
-```
+## Verification SQL
 
-## Корисні SQL-перевірки
 ```sql
-SELECT collector_name, started_at, finished_at, status, records_collected, error_message
-FROM collector_runs
-ORDER BY started_at DESC
-LIMIT 10;
-
-SELECT COUNT(*) FROM symbols;
-SELECT COUNT(*) FROM assets;
 SELECT COUNT(*) FROM margin_pool_snapshots;
-SELECT COUNT(*) FROM price_klines;
 SELECT COUNT(*) FROM pool_metrics;
+SELECT COUNT(*) FROM spot_price_snapshots;
+SELECT COUNT(*) FROM borrow_pressure_metrics;
+```
 
-SELECT
-  date_trunc('minute', collected_at) AS minute,
-  COUNT(*) AS rows
-FROM margin_pool_snapshots
-GROUP BY minute
-ORDER BY minute DESC
-LIMIT 10;
-
-SELECT
-  asset,
-  COUNT(*) AS snapshots,
-  MIN(collected_at) AS first_seen,
-  MAX(collected_at) AS last_seen
-FROM margin_pool_snapshots
-GROUP BY asset
-ORDER BY snapshots DESC
-LIMIT 20;
-
-SELECT
-  asset,
-  pool_type,
-  available_inventory,
-  previous_available_inventory,
-  pool_change,
-  pool_change_percent,
-  pool_decrease,
-  pool_recovery,
-  created_at
-FROM pool_metrics
-WHERE previous_available_inventory IS NOT NULL
-ORDER BY created_at DESC
+```sql
+SELECT asset, symbol, price_usdt, collected_at
+FROM spot_price_snapshots
+ORDER BY collected_at DESC, asset
 LIMIT 20;
 ```
 
-## Що перевірити після 1-2 годин loop mode
-1. `COUNT(*) FROM margin_pool_snapshots` зростає.
-2. `COUNT(*) FROM pool_metrics` зростає.
-3. У `date_trunc('minute', collected_at)` видно блоки приблизно по 414 рядків на цикл.
-4. Для кожного asset кількість snapshots стає 2, 3, 4 і більше.
-5. У `pool_metrics` для наступних циклів з’являється `previous_available_inventory IS NOT NULL`.
+```sql
+SELECT timeframe, asset, borrow_pressure_units, borrow_pressure_percent, borrow_pressure_usdt, recovery_usdt, price_available, current_snapshot_at
+FROM borrow_pressure_metrics
+ORDER BY calculated_at DESC, timeframe, borrow_pressure_usdt DESC NULLS LAST
+LIMIT 40;
+```
 
-## Наступний milestone
-Data Collection Hardening v0.2:
-1. Зробити `allAssets` optional або disabled by default.
-2. Додати `PRICE_COLLECTION_MODE=disabled/scheduled`.
-3. Зробити Available Pool основним collector режимом.
-4. Додати health/report script або команду для SQL-перевірок.
-5. Додати top pool changes report.
-6. Оновити `README.md`.
-7. Підтримувати `HANDOFF_CURRENT_STATE.md` актуальним.
+## Known non-blocking issue
 
-## Обмеження та безпека
-- Не змінювати код collector-а в межах цього handoff.
-- Не змінювати schema БД.
-- Не змінювати `docker-compose.yml`.
-- Не запускати destructive DB commands.
-- Не додавати secrets.
-- Не копіювати в цей файл `BINANCE_API_KEY`, `BINANCE_API_SECRET` або вміст `.env`.
-- `.env`, `.venv`, `data/`, backups мають залишатись поза git.
+- `GET /sapi/v1/margin/allAssets` can still return HTTP 400 / `-2014` in some setups.
+- This remains non-critical because the main collector value is `available-inventory`.
+- `COLLECT_MARGIN_ASSETS=false` stays the recommended default.
+
+## Constraints
+
+- Do not commit `.env`.
+- Do not commit `.venv`, `data/`, or `backups/`.
+- Do not expose API secrets in logs or docs.
+- Do not add trading behavior in this repository.

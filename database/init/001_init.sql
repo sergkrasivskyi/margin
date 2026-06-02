@@ -73,6 +73,59 @@ CREATE TABLE IF NOT EXISTS pool_metrics (
 CREATE INDEX IF NOT EXISTS idx_pool_metrics_asset_type_ts
   ON pool_metrics(asset, pool_type, "timestamp");
 
+CREATE TABLE IF NOT EXISTS spot_price_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  asset TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  price_usdt NUMERIC NOT NULL,
+  collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source TEXT NOT NULL,
+  raw_json JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_spot_price_snapshots_asset_time
+  ON spot_price_snapshots(asset, collected_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_spot_price_snapshots_symbol_time
+  ON spot_price_snapshots(symbol, collected_at DESC);
+
+CREATE TABLE IF NOT EXISTS borrow_pressure_metrics (
+  id BIGSERIAL PRIMARY KEY,
+  asset TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  current_available_inventory NUMERIC NOT NULL,
+  previous_available_inventory NUMERIC NOT NULL,
+  net_pool_change_units NUMERIC,
+  net_pool_change_percent NUMERIC,
+  borrow_pressure_units NUMERIC NOT NULL,
+  borrow_pressure_percent NUMERIC,
+  borrow_pressure_usdt NUMERIC,
+  recovery_units NUMERIC NOT NULL,
+  recovery_percent NUMERIC,
+  recovery_usdt NUMERIC,
+  spot_price_usdt NUMERIC,
+  price_symbol TEXT,
+  price_available BOOLEAN NOT NULL DEFAULT FALSE,
+  current_snapshot_at TIMESTAMPTZ NOT NULL,
+  previous_snapshot_at TIMESTAMPTZ NOT NULL,
+  calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_borrow_pressure_asset_tf_calc
+  ON borrow_pressure_metrics(asset, timeframe, calculated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_borrow_pressure_tf_calc
+  ON borrow_pressure_metrics(timeframe, calculated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_borrow_pressure_tf_usdt
+  ON borrow_pressure_metrics(timeframe, borrow_pressure_usdt DESC);
+
+CREATE INDEX IF NOT EXISTS idx_borrow_pressure_tf_percent
+  ON borrow_pressure_metrics(timeframe, borrow_pressure_percent DESC);
+
+CREATE INDEX IF NOT EXISTS idx_borrow_pressure_tf_recovery_usdt
+  ON borrow_pressure_metrics(timeframe, recovery_usdt DESC);
+
 CREATE TABLE IF NOT EXISTS collector_runs (
   id BIGSERIAL PRIMARY KEY,
   collector_name TEXT NOT NULL,
@@ -86,4 +139,3 @@ CREATE TABLE IF NOT EXISTS collector_runs (
 
 CREATE INDEX IF NOT EXISTS idx_collector_runs_started_at
   ON collector_runs(started_at DESC);
-

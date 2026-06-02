@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
 
 from collector.config import Settings
+
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / "database" / "init" / "001_init.sql"
+BORROW_PRESSURE_TIMEFRAMES = {
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1h": timedelta(hours=1),
+    "4h": timedelta(hours=4),
+}
 
 
 def _to_dt(ms: int | None) -> datetime | None:
@@ -32,6 +41,12 @@ def connect(settings: Settings) -> psycopg.Connection:
     )
 
 
+def ensure_schema(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+    conn.commit()
+
+
 def start_run(conn: psycopg.Connection, collector_name: str) -> int:
     with conn.cursor() as cur:
         cur.execute(
@@ -47,7 +62,14 @@ def start_run(conn: psycopg.Connection, collector_name: str) -> int:
     return run_id
 
 
-def finish_run(conn: psycopg.Connection, run_id: int, status: str, records_collected: int, error_message: str | None, raw_error: dict | None) -> None:
+def finish_run(
+    conn: psycopg.Connection,
+    run_id: int,
+    status: str,
+    records_collected: int,
+    error_message: str | None,
+    raw_error: dict | None,
+) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -116,7 +138,7 @@ def upsert_assets(conn: psycopg.Connection, assets_payload: list[dict]) -> int:
     return count
 
 
-def insert_margin_snapshots(conn: psycopg.Connection, pool_type: str, payload: dict) -> int:
+def insert_margin_snapshots(conn: psycopg.Connection, pool_type: str, payload: dict) -> tuple[int, int]:
     if not isinstance(payload, dict):
         raise ValueError(f"available-inventory payload must be dict, got {type(payload).__name__}")
 
@@ -210,6 +232,29 @@ def insert_klines(conn: psycopg.Connection, symbol: str, interval: str, klines: 
     return inserted
 
 
+def insert_spot_price_snapshots(conn: psycopg.Connection, price_rows: list[dict]) -> int:
+    inserted = 0
+    with conn.cursor() as cur:
+        for row in price_rows:
+            cur.execute(
+                """
+                INSERT INTO spot_price_snapshots (
+                  asset, symbol, price_usdt, collected_at, source, raw_json
+                ) VALUES (%s, %s, %s, NOW(), %s, %s::jsonb)
+                """,
+                (
+                    row["asset"],
+                    row["symbol"],
+                    row["price_usdt"],
+                    row["source"],
+                    json.dumps(row["raw_json"]),
+                ),
+            )
+            inserted += 1
+    conn.commit()
+    return inserted
+
+
 def fetch_previous_snapshot(conn: psycopg.Connection, asset: str, pool_type: str, current_collected_at: datetime) -> Decimal | None:
     with conn.cursor() as cur:
         cur.execute(
@@ -267,5 +312,115 @@ def insert_pool_metric(conn: psycopg.Connection, row: dict) -> None:
                 row["pool_recovery"],
                 row["borrow_pressure_proxy"],
                 row["repay_or_refill_proxy"],
+            ),
+        )
+
+
+def fetch_latest_snapshot_timestamp(conn: psycopg.Connection) -> datetime | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(collected_at) AS collected_at FROM margin_pool_snapshots")
+        row = cur.fetchone()
+        return row["collected_at"] if row else None
+
+
+def fetch_snapshot_block(conn: psycopg.Connection, collected_at: datetime) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT asset, pool_type, available_inventory, collected_at
+            FROM margin_pool_snapshots
+            WHERE collected_at = %s
+            ORDER BY asset
+            """,
+            (collected_at,),
+        )
+        return list(cur.fetchall())
+
+
+def fetch_previous_snapshot_for_timeframe(
+    conn: psycopg.Connection,
+    asset: str,
+    pool_type: str,
+    target_time: datetime,
+) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT asset, pool_type, available_inventory, collected_at
+            FROM margin_pool_snapshots
+            WHERE asset = %s
+              AND pool_type = %s
+              AND collected_at <= %s
+            ORDER BY collected_at DESC
+            LIMIT 1
+            """,
+            (asset, pool_type, target_time),
+        )
+        return cur.fetchone()
+
+
+def fetch_latest_spot_price_for_asset(conn: psycopg.Connection, asset: str) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT asset, symbol, price_usdt, collected_at
+            FROM spot_price_snapshots
+            WHERE asset = %s
+            ORDER BY collected_at DESC
+            LIMIT 1
+            """,
+            (asset,),
+        )
+        return cur.fetchone()
+
+
+def delete_borrow_pressure_metrics_for_snapshot(conn: psycopg.Connection, current_snapshot_at: datetime) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM borrow_pressure_metrics
+            WHERE current_snapshot_at = %s
+            """,
+            (current_snapshot_at,),
+        )
+    conn.commit()
+
+
+def insert_borrow_pressure_metric(conn: psycopg.Connection, row: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO borrow_pressure_metrics (
+              asset, timeframe, current_available_inventory, previous_available_inventory,
+              net_pool_change_units, net_pool_change_percent, borrow_pressure_units,
+              borrow_pressure_percent, borrow_pressure_usdt, recovery_units, recovery_percent,
+              recovery_usdt, spot_price_usdt, price_symbol, price_available,
+              current_snapshot_at, previous_snapshot_at, calculated_at
+            ) VALUES (
+              %s, %s, %s, %s,
+              %s, %s, %s,
+              %s, %s, %s, %s,
+              %s, %s, %s, %s,
+              %s, %s, NOW()
+            )
+            """,
+            (
+                row["asset"],
+                row["timeframe"],
+                row["current_available_inventory"],
+                row["previous_available_inventory"],
+                row["net_pool_change_units"],
+                row["net_pool_change_percent"],
+                row["borrow_pressure_units"],
+                row["borrow_pressure_percent"],
+                row["borrow_pressure_usdt"],
+                row["recovery_units"],
+                row["recovery_percent"],
+                row["recovery_usdt"],
+                row["spot_price_usdt"],
+                row["price_symbol"],
+                row["price_available"],
+                row["current_snapshot_at"],
+                row["previous_snapshot_at"],
             ),
         )

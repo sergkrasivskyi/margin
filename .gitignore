@@ -3,6 +3,6 @@
 __pycache__/
 *.pyc
 data/
+backups/
 *.log
 .vscode/settings.json
-

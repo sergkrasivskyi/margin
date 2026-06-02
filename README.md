@@ -1,14 +1,23 @@
 # margin-loan-research
 
-Local-first Data Core MVP для збору Binance Margin Available Inventory (Available Pool) у PostgreSQL.
+Local-first research collector for Binance Margin available inventory. The project stores raw inventory snapshots in PostgreSQL, derives pool-change metrics, and now derives research-only borrow-pressure metrics valued in USDT from direct spot `ASSETUSDT` prices.
 
-## MVP scope
+## Scope
 
-- Collector запускається локально через `.venv`.
-- PostgreSQL працює в Docker.
-- Головна цінність: `available-inventory` snapshots + `pool_metrics`.
-- `price_klines` — допоміжний кеш (опційно).
-- Немає web dashboard, backend API, Telegram, trading/borrow/repay.
+- Local Python collector run from `.venv`.
+- PostgreSQL in Docker.
+- Core data:
+  - `margin_pool_snapshots`
+  - `pool_metrics`
+  - `spot_price_snapshots`
+  - `borrow_pressure_metrics`
+- Optional helper cache:
+  - `price_klines`
+- Out of scope:
+  - web dashboard
+  - backend API
+  - Telegram
+  - trading / borrow / repay actions
 
 ## Quick start
 
@@ -21,39 +30,29 @@ docker compose up -d postgres
 python -m collector.main --once
 ```
 
-## Основні режими запуску
+## Run modes
 
-Один цикл:
+One cycle:
+
 ```powershell
 python -m collector.main --once
 ```
 
-Loop режим:
+Loop mode:
+
 ```powershell
 python -m collector.main --loop
 ```
 
-Health/report:
+Health report:
+
 ```powershell
 python -m collector.main --health-report
 ```
 
-## Конфігурація (.env)
+## Configuration
 
-Базові:
-- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
-- `BINANCE_API_KEY`, `BINANCE_API_SECRET`
-- `WATCHLIST_ASSETS`, `KLINE_INTERVAL`, `POOL_TYPE`
-
-Collector v0.2:
-- `COLLECTOR_INTERVAL_SECONDS=900`
-- `COLLECT_MARGIN_ASSETS=false`
-- `PRICE_COLLECTION_MODE=scheduled` (`scheduled` або `disabled`)
-- `SCHEDULER_MODE=aligned` (`aligned` або `interval`)
-- `ALIGNMENT_MINUTES=15`
-- `COLLECTION_DELAY_SECONDS=20`
-
-Рекомендований блок `.env.example` (без secrets):
+Recommended `.env.example` block:
 
 ```env
 POSTGRES_HOST=localhost
@@ -71,115 +70,139 @@ COLLECTOR_INTERVAL_SECONDS=900
 POOL_TYPE=MARGIN
 COLLECT_MARGIN_ASSETS=false
 PRICE_COLLECTION_MODE=scheduled
+SPOT_PRICE_COLLECTION_MODE=scheduled
 SCHEDULER_MODE=aligned
 ALIGNMENT_MINUTES=15
 COLLECTION_DELAY_SECONDS=20
 ```
 
-## Пояснення v0.2
+Key flags:
 
-### `COLLECT_MARGIN_ASSETS`
-- `false` (default): не викликає `/sapi/v1/margin/allAssets`.
-- `true`: викликає `allAssets`, але його помилка non-critical.
+- `COLLECT_MARGIN_ASSETS=false`: skip `/sapi/v1/margin/allAssets`. This is non-critical for the MVP.
+- `PRICE_COLLECTION_MODE=disabled|scheduled`: control `price_klines` collection.
+- `SPOT_PRICE_COLLECTION_MODE=disabled|scheduled`: control direct spot USDT snapshot collection from `/api/v3/ticker/price`.
+- `SCHEDULER_MODE=interval|aligned`: legacy interval sleeping or aligned time-grid scheduling.
 
-Це прибирає перехід у `partial_success` через non-blocking `allAssets`.
+## Borrow Pressure Proxy
 
-### `PRICE_COLLECTION_MODE`
-- `disabled`: collector не збирає klines (це не помилка).
-- `scheduled`: збір klines працює як раніше.
+The collector treats a decrease in available inventory as a borrow-pressure proxy:
 
-### `SCHEDULER_MODE`
-- `interval`: старий режим — sleep після завершення циклу.
-- `aligned`: запуск на часовій сітці.
-  - Для `ALIGNMENT_MINUTES=15`, `COLLECTION_DELAY_SECONDS=20`:
-    - `00:00:20`, `00:15:20`, `00:30:20`, `00:45:20`
+- `borrow_pressure_units = max(0, previous_pool - current_pool)`
+- `recovery_units = max(0, current_pool - previous_pool)`
 
-У логах:
-- `scheduler_mode`
-- `next_run_at`
-- `alignment_minutes`
-- `collection_delay_seconds`
-- `actual_started_at`
-- `delay_from_schedule_seconds`
+Research timeframes:
 
-## Non-blocking issue
+- `15m`
+- `30m`
+- `1h`
+- `4h`
 
-`GET /sapi/v1/margin/allAssets` може повертати HTTP 400 (`code=-2014`) у певному оточенні.
-Для MVP це non-blocking, бо основний endpoint `available-inventory` працює.
-За замовчуванням `COLLECT_MARGIN_ASSETS=false`.
+USDT valuation rules:
 
-## SQL перевірки
+- Only direct spot `ASSETUSDT` prices are used.
+- Futures prices are not used.
+- Synthetic or indirect conversion paths are not used.
+- If there is no direct spot pair, `price_available=false` and `borrow_pressure_usdt` / `recovery_usdt` stay `NULL`.
+
+This project produces research metrics, not trading signals.
+
+## Collector v0.3 flow
+
+After a successful `available-inventory` collection cycle:
+
+1. Insert `margin_pool_snapshots`.
+2. If `SPOT_PRICE_COLLECTION_MODE=scheduled`, fetch `/api/v3/ticker/price` and store direct `*USDT` pairs in `spot_price_snapshots`.
+3. Update legacy `pool_metrics`.
+4. Calculate `borrow_pressure_metrics` for `15m`, `30m`, `1h`, `4h`.
+
+The collector logs:
+
+- `spot_prices fetched=N inserted=N`
+- `borrow_pressure_metrics calculated=N`
+- `calculated_by_timeframe={15m: N, 30m: N, 1h: N, 4h: N}`
+- `price_unavailable_count=N`
+
+If history is still missing for `30m`, `1h`, or `4h`, low or zero counts are expected.
+
+## Health report
+
+`python -m collector.main --health-report` now shows:
+
+- row counts for `margin_pool_snapshots`, `pool_metrics`, `spot_price_snapshots`, `borrow_pressure_metrics`
+- latest snapshot blocks
+- latest `borrow_pressure_metrics` block per timeframe
+- top Borrow Pressure USDT by timeframe
+- top Borrow Pressure % by timeframe
+- top Recovery USDT by timeframe
+- top Recovery % by timeframe
+
+Expected report shape:
+
+```text
+health_report: research metrics only, not trading signals
+health_report: spot_price_snapshots_count=12345
+health_report: borrow_pressure_metrics_count=6789
+health_report: latest borrow_pressure_metrics blocks by timeframe
+borrow_pressure_block: {'timeframe': '15m', 'latest_calculated_at': ..., 'rows_at_latest': 414}
+health_report: top_borrow_pressure_usdt timeframe=15m
+top_borrow_pressure_usdt: {'asset': 'BTC', 'borrow_pressure_usdt': ..., ...}
+health_report: top_borrow_pressure_percent timeframe=15m
+health_report: top_recovery_usdt timeframe=15m
+health_report: top_recovery_percent timeframe=15m
+```
+
+## SQL checks
+
+Collector runs:
 
 ```sql
 SELECT collector_name, started_at, finished_at, status, records_collected, error_message
 FROM collector_runs
 ORDER BY started_at DESC
 LIMIT 10;
+```
 
-SELECT COUNT(*) FROM symbols;
-SELECT COUNT(*) FROM assets;
+Counts:
+
+```sql
 SELECT COUNT(*) FROM margin_pool_snapshots;
 SELECT COUNT(*) FROM price_klines;
 SELECT COUNT(*) FROM pool_metrics;
+SELECT COUNT(*) FROM spot_price_snapshots;
+SELECT COUNT(*) FROM borrow_pressure_metrics;
 ```
 
-Часові блоки snapshots:
+Latest spot prices:
 
 ```sql
-SELECT date_trunc('minute', collected_at) AS minute, COUNT(*) AS rows
-FROM margin_pool_snapshots
-GROUP BY minute
-ORDER BY minute DESC
-LIMIT 10;
-```
-
-Кількість snapshots по asset:
-
-```sql
-SELECT asset, COUNT(*) AS snapshots, MIN(collected_at) AS first_seen, MAX(collected_at) AS last_seen
-FROM margin_pool_snapshots
-GROUP BY asset
-ORDER BY snapshots DESC
+SELECT asset, symbol, price_usdt, collected_at
+FROM spot_price_snapshots
+ORDER BY collected_at DESC, asset
 LIMIT 20;
 ```
 
-## Top pool changes report (research-only)
-
-Це технічний research-report по змінах Available Pool, не торгові сигнали.
-
-Top decreases:
+Latest borrow pressure by timeframe:
 
 ```sql
-SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_decrease, created_at
-FROM pool_metrics
-WHERE previous_available_inventory IS NOT NULL
-ORDER BY pool_decrease DESC, created_at DESC
+SELECT timeframe, asset, borrow_pressure_units, borrow_pressure_percent, borrow_pressure_usdt, price_available, current_snapshot_at
+FROM borrow_pressure_metrics
+ORDER BY calculated_at DESC, timeframe, borrow_pressure_usdt DESC NULLS LAST
+LIMIT 40;
+```
+
+Top borrow pressure USDT for one timeframe:
+
+```sql
+SELECT asset, borrow_pressure_usdt, borrow_pressure_units, spot_price_usdt, current_snapshot_at
+FROM borrow_pressure_metrics
+WHERE timeframe = '15m'
+  AND price_available = TRUE
+ORDER BY borrow_pressure_usdt DESC
 LIMIT 20;
 ```
 
-Top recoveries:
+## Safety
 
-```sql
-SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_recovery, created_at
-FROM pool_metrics
-WHERE previous_available_inventory IS NOT NULL
-ORDER BY pool_recovery DESC, created_at DESC
-LIMIT 20;
-```
-
-Top absolute percent changes:
-
-```sql
-SELECT asset, pool_change_percent, available_inventory, previous_available_inventory, created_at
-FROM pool_metrics
-WHERE previous_available_inventory IS NOT NULL
-  AND pool_change_percent IS NOT NULL
-ORDER BY ABS(pool_change_percent) DESC, created_at DESC
-LIMIT 20;
-```
-
-## Безпека
-
-- Не комітити `.env`, `.venv`, `data/`, backups, logs.
-- Не логувати API secret.
-- Працювати тільки з офіційними Binance endpoints.
+- Do not commit `.env`, `.venv`, `data/`, or `backups/`.
+- Do not log API secrets.
+- Use only official Binance endpoints.

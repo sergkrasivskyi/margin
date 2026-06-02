@@ -5,10 +5,11 @@ import logging
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 
+from collector import db, metrics
 from collector.binance_client import BinanceAPIError, BinanceClient
 from collector.config import load_settings
-from collector import db, metrics
 
 LOGGER = logging.getLogger("collector")
 
@@ -27,8 +28,55 @@ def _next_aligned_run(now_utc: datetime, alignment_minutes: int, delay_seconds: 
     return datetime.fromtimestamp(next_boundary, tz=timezone.utc) + timedelta(seconds=max(0, delay_seconds))
 
 
-def _run_health_report(conn) -> None:
+def _build_direct_usdt_price_rows(payload: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol", "")).upper()
+        if not symbol.endswith("USDT") or len(symbol) <= 4:
+            continue
+        price_raw = item.get("price")
+        try:
+            price_usdt = Decimal(str(price_raw))
+        except (InvalidOperation, TypeError):
+            continue
+        rows.append(
+            {
+                "asset": symbol[:-4],
+                "symbol": symbol,
+                "price_usdt": price_usdt,
+                "source": "binance:/api/v3/ticker/price",
+                "raw_json": item,
+            }
+        )
+    return rows
+
+
+def _build_spot_price_map(price_rows: list[dict]) -> dict[str, dict[str, Decimal | str]]:
+    return {
+        row["asset"]: {
+            "symbol": row["symbol"],
+            "price_usdt": row["price_usdt"],
+        }
+        for row in price_rows
+    }
+
+
+def _log_health_rankings(conn, timeframe: str, label: str, query: str) -> None:
     with conn.cursor() as cur:
+        cur.execute(query, (timeframe,))
+        LOGGER.info("health_report: %s timeframe=%s", label, timeframe)
+        for row in cur.fetchall():
+            LOGGER.info("%s: %s", label, row)
+
+
+def _run_health_report(conn) -> None:
+    db.ensure_schema(conn)
+    timeframes = tuple(db.BORROW_PRESSURE_TIMEFRAMES.keys())
+
+    with conn.cursor() as cur:
+        LOGGER.info("health_report: research metrics only, not trading signals")
         LOGGER.info("health_report: last 10 collector_runs")
         cur.execute(
             """
@@ -41,11 +89,14 @@ def _run_health_report(conn) -> None:
         for row in cur.fetchall():
             LOGGER.info("run: %s", row)
 
-        cur.execute("SELECT COUNT(*) AS count FROM margin_pool_snapshots")
-        LOGGER.info("health_report: margin_pool_snapshots_count=%s", cur.fetchone()["count"])
-
-        cur.execute("SELECT COUNT(*) AS count FROM pool_metrics")
-        LOGGER.info("health_report: pool_metrics_count=%s", cur.fetchone()["count"])
+        for table_name in (
+            "margin_pool_snapshots",
+            "pool_metrics",
+            "spot_price_snapshots",
+            "borrow_pressure_metrics",
+        ):
+            cur.execute(f"SELECT COUNT(*) AS count FROM {table_name}")
+            LOGGER.info("health_report: %s_count=%s", table_name, cur.fetchone()["count"])
 
         cur.execute(
             """
@@ -62,102 +113,88 @@ def _run_health_report(conn) -> None:
 
         cur.execute(
             """
-            SELECT asset, COUNT(*) AS snapshots
-            FROM margin_pool_snapshots
-            GROUP BY asset
-            ORDER BY snapshots DESC, asset
-            LIMIT 20
-            """
-        )
-        LOGGER.info("health_report: snapshot count by asset (top 20)")
-        for row in cur.fetchall():
-            LOGGER.info("asset_snapshots: %s", row)
-
-        cur.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM pool_metrics
-            WHERE previous_available_inventory IS NOT NULL
-            """
-        )
-        LOGGER.info("health_report: pool_metrics_with_previous=%s", cur.fetchone()["count"])
-
-        cur.execute(
-            """
-            SELECT MAX(created_at) AS latest_metrics_block
-            FROM pool_metrics
-            """
-        )
-        latest_block = cur.fetchone()["latest_metrics_block"]
-        LOGGER.info("health_report: latest_metrics_block=%s", latest_block)
-
-        if latest_block is None:
-            LOGGER.info("health_report: no pool_metrics rows for top changes report")
-            return
-
-        cur.execute(
-            """
-            SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_decrease, created_at
-            FROM pool_metrics
-            WHERE previous_available_inventory IS NOT NULL
-              AND created_at = %s
-            ORDER BY pool_decrease DESC
-            LIMIT 20
+            WITH latest AS (
+              SELECT timeframe, MAX(calculated_at) AS latest_calculated_at
+              FROM borrow_pressure_metrics
+              WHERE timeframe = ANY(%s)
+              GROUP BY timeframe
+            )
+            SELECT l.timeframe, l.latest_calculated_at, COUNT(bpm.id) AS rows_at_latest
+            FROM latest l
+            JOIN borrow_pressure_metrics bpm
+              ON bpm.timeframe = l.timeframe
+             AND bpm.calculated_at = l.latest_calculated_at
+            GROUP BY l.timeframe, l.latest_calculated_at
+            ORDER BY l.timeframe
             """,
-            (latest_block,),
+            (list(timeframes),),
         )
-        LOGGER.info("health_report: top pool decreases for latest cycle")
+        LOGGER.info("health_report: latest borrow_pressure_metrics blocks by timeframe")
         for row in cur.fetchall():
-            LOGGER.info("top_decrease: %s", row)
+            LOGGER.info("borrow_pressure_block: %s", row)
 
         cur.execute(
             """
-            SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_recovery, created_at
-            FROM pool_metrics
-            WHERE previous_available_inventory IS NOT NULL
-              AND created_at = %s
-            ORDER BY pool_recovery DESC
-            LIMIT 20
-            """,
-            (latest_block,),
+            SELECT
+              timeframe,
+              COUNT(*) AS rows,
+              COUNT(*) FILTER (WHERE price_available) AS price_available_rows,
+              COUNT(*) FILTER (WHERE NOT price_available) AS price_unavailable_rows
+            FROM borrow_pressure_metrics
+            GROUP BY timeframe
+            ORDER BY timeframe
+            """
         )
-        LOGGER.info("health_report: top pool recoveries for latest cycle")
+        LOGGER.info("health_report: price availability by timeframe")
         for row in cur.fetchall():
-            LOGGER.info("top_recovery: %s", row)
+            LOGGER.info("price_availability: %s", row)
 
-        cur.execute(
-            """
-            SELECT asset, pool_change_percent, available_inventory, previous_available_inventory, created_at
-            FROM pool_metrics
-            WHERE previous_available_inventory IS NOT NULL
-              AND pool_change_percent IS NOT NULL
-              AND created_at = %s
-            ORDER BY ABS(pool_change_percent) DESC
-            LIMIT 20
-            """,
-            (latest_block,),
-        )
-        LOGGER.info("health_report: top absolute percent changes for latest cycle")
-        for row in cur.fetchall():
-            LOGGER.info("top_abs_pct_change: %s", row)
+    top_borrow_pressure_usdt = """
+        SELECT asset, borrow_pressure_usdt, borrow_pressure_units, spot_price_usdt, current_snapshot_at, calculated_at
+        FROM borrow_pressure_metrics
+        WHERE timeframe = %s
+          AND price_available = TRUE
+          AND borrow_pressure_usdt IS NOT NULL
+        ORDER BY borrow_pressure_usdt DESC, calculated_at DESC, asset
+        LIMIT 10
+    """
+    top_borrow_pressure_percent = """
+        SELECT asset, borrow_pressure_percent, borrow_pressure_units, previous_available_inventory, current_snapshot_at, calculated_at
+        FROM borrow_pressure_metrics
+        WHERE timeframe = %s
+          AND borrow_pressure_percent IS NOT NULL
+        ORDER BY borrow_pressure_percent DESC, calculated_at DESC, asset
+        LIMIT 10
+    """
+    top_recovery_usdt = """
+        SELECT asset, recovery_usdt, recovery_units, spot_price_usdt, current_snapshot_at, calculated_at
+        FROM borrow_pressure_metrics
+        WHERE timeframe = %s
+          AND price_available = TRUE
+          AND recovery_usdt IS NOT NULL
+        ORDER BY recovery_usdt DESC, calculated_at DESC, asset
+        LIMIT 10
+    """
+    top_recovery_percent = """
+        SELECT asset, recovery_percent, recovery_units, previous_available_inventory, current_snapshot_at, calculated_at
+        FROM borrow_pressure_metrics
+        WHERE timeframe = %s
+          AND recovery_percent IS NOT NULL
+        ORDER BY recovery_percent DESC, calculated_at DESC, asset
+        LIMIT 10
+    """
 
-        cur.execute(
-            """
-            SELECT asset, available_inventory, previous_available_inventory, pool_change, pool_change_percent, pool_decrease, created_at
-            FROM pool_metrics
-            WHERE previous_available_inventory IS NOT NULL
-            ORDER BY pool_decrease DESC, created_at DESC
-            LIMIT 20
-            """
-        )
-        LOGGER.info("health_report: top pool decreases all history")
-        for row in cur.fetchall():
-            LOGGER.info("top_decrease_all_history: %s", row)
+    for timeframe in timeframes:
+        _log_health_rankings(conn, timeframe, "top_borrow_pressure_usdt", top_borrow_pressure_usdt)
+        _log_health_rankings(conn, timeframe, "top_borrow_pressure_percent", top_borrow_pressure_percent)
+        _log_health_rankings(conn, timeframe, "top_recovery_usdt", top_recovery_usdt)
+        _log_health_rankings(conn, timeframe, "top_recovery_percent", top_recovery_percent)
 
 
 def run_once() -> int:
     settings = load_settings()
     conn = db.connect(settings)
+    db.ensure_schema(conn)
     client = BinanceClient(settings.binance_api_key, settings.binance_api_secret)
     run_id = db.start_run(conn, "margin-local-data-core")
     records_collected = 0
@@ -190,6 +227,7 @@ def run_once() -> int:
 
         snapshots_count = 0
         snapshots_fetched = 0
+        inventory_collected = False
         if not settings.binance_api_key or not settings.binance_api_secret:
             critical_problems.append("available-inventory skipped: missing API key/secret")
             LOGGER.warning("available-inventory skipped because Binance API credentials are missing")
@@ -199,6 +237,7 @@ def run_once() -> int:
                 inv_payload = client.get_margin_available_inventory(settings.pool_type)
                 snapshots_count, snapshots_fetched = db.insert_margin_snapshots(conn, settings.pool_type, inv_payload)
                 records_collected += snapshots_count
+                inventory_collected = snapshots_count > 0
                 inventory_state = "collected"
             except BinanceAPIError as exc:
                 critical_problems.append("available-inventory failed")
@@ -218,6 +257,31 @@ def run_once() -> int:
             snapshots_fetched,
             snapshots_count,
         )
+
+        spot_prices_inserted = 0
+        spot_prices_fetched = 0
+        spot_price_map: dict[str, dict[str, Decimal | str]] = {}
+        if settings.spot_price_collection_mode == "disabled":
+            LOGGER.info("spot price collection disabled by SPOT_PRICE_COLLECTION_MODE=disabled")
+        elif inventory_collected:
+            try:
+                ticker_payload = client.get_spot_ticker_prices()
+                spot_price_rows = _build_direct_usdt_price_rows(ticker_payload)
+                spot_price_map = _build_spot_price_map(spot_price_rows)
+                spot_prices_fetched = len(spot_price_rows)
+                spot_prices_inserted = db.insert_spot_price_snapshots(conn, spot_price_rows)
+                records_collected += spot_prices_inserted
+                LOGGER.info("spot_prices fetched=%s inserted=%s", spot_prices_fetched, spot_prices_inserted)
+            except BinanceAPIError as exc:
+                critical_problems.append("spot prices failed")
+                raw_errors.append({"endpoint": "spot-ticker-price", "details": exc.details})
+                LOGGER.warning("spot prices failed: %s details=%s", exc, exc.details)
+            except Exception as exc:
+                critical_problems.append("spot prices failed")
+                raw_errors.append({"endpoint": "spot-ticker-price", "details": {"error": str(exc), "type": exc.__class__.__name__}})
+                LOGGER.warning("spot prices failed: %s", exc)
+        else:
+            LOGGER.info("spot price collection skipped because inventory snapshot was not collected")
 
         klines_inserted = 0
         klines_fetched = 0
@@ -257,9 +321,35 @@ def run_once() -> int:
         records_collected += pool_metrics_count
         LOGGER.info("pool_metrics calculated=%s", pool_metrics_count)
 
+        borrow_pressure_summary = {
+            "calculated": 0,
+            "calculated_by_timeframe": {timeframe: 0 for timeframe in db.BORROW_PRESSURE_TIMEFRAMES},
+            "price_available_count": 0,
+            "price_unavailable_count": 0,
+            "sample_price_matches": [],
+        }
+        if inventory_collected:
+            borrow_pressure_summary = metrics.calculate_and_store_borrow_pressure_metrics(conn, spot_price_map)
+            records_collected += borrow_pressure_summary["calculated"]
+        LOGGER.info(
+            "borrow_pressure_metrics calculated=%s calculated_by_timeframe=%s price_available_count=%s "
+            "price_unavailable_count=%s sample_price_matches=%s",
+            borrow_pressure_summary["calculated"],
+            borrow_pressure_summary["calculated_by_timeframe"],
+            borrow_pressure_summary["price_available_count"],
+            borrow_pressure_summary["price_unavailable_count"],
+            borrow_pressure_summary["sample_price_matches"],
+        )
+
         if not critical_problems:
             status = "success"
-        elif records_collected > 0 or snapshots_count > 0 or klines_success_symbols > 0:
+        elif (
+            records_collected > 0
+            or snapshots_count > 0
+            or klines_success_symbols > 0
+            or spot_prices_inserted > 0
+            or borrow_pressure_summary["calculated"] > 0
+        ):
             status = "partial_success"
         else:
             status = "failed"
@@ -269,12 +359,15 @@ def run_once() -> int:
 
         db.finish_run(conn, run_id, status, records_collected, error_message, raw_error_payload)
         LOGGER.info(
-            "Cycle finished: assets=%s inventory=%s klines_fetched=%s klines_inserted=%s pool_metrics=%s run_status=%s",
+            "Cycle finished: assets=%s inventory=%s spot_prices_inserted=%s klines_fetched=%s klines_inserted=%s "
+            "pool_metrics=%s borrow_pressure_metrics=%s run_status=%s",
             assets_count,
             inventory_state,
+            spot_prices_inserted,
             klines_fetched,
             klines_inserted,
             pool_metrics_count,
+            borrow_pressure_summary["calculated"],
             status,
         )
         return 0 if status != "failed" else 1
