@@ -49,12 +49,14 @@ Current API endpoints:
 Before making changes always run:
 
 ```powershell
-git log --oneline --decorate -5
-git status --short
-git diff --name-only
+git --no-pager log --oneline --decorate -5; git status --short; git diff --name-only
 ```
 
 If the working tree is not clean, stop and report modified files.
+
+If a required read-only pre-check command fails because the native Windows sandbox cannot spawn the process, do not retry multiple non-escalated attempts. Request escalation once and continue.
+
+If the user provides fresh exact pre-check outputs in the current prompt, treat those as pre-check context and do not rerun the same commands unless files were changed or the task requires a new check.
 
 ## Verification commands
 

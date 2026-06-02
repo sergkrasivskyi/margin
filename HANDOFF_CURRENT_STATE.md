@@ -17,7 +17,43 @@
 - Repo-level `AGENTS.md` project instructions are added for future Codex work.
 - Milestone `Web Scanner MVP v0.2` is implemented as a static read-only FastAPI-served dashboard.
 - Milestone `Web Scanner UX Polish v0.2.1` is implemented.
+- Milestone `Reduce Codex sandbox/precheck friction on Windows` is implemented.
 - Next milestone: continue scanner/API UX planning if needed.
+
+## Reduce Codex sandbox/precheck friction on Windows
+
+Changed files:
+
+- `AGENTS.md`
+- `.codex/config.toml`
+- `HANDOFF_CURRENT_STATE.md`
+
+Instruction/config changes:
+
+- `AGENTS.md` now uses one combined git preflight command:
+  `git --no-pager log --oneline --decorate -5; git status --short; git diff --name-only`
+- `AGENTS.md` now says to request escalation once if a required read-only pre-check command fails because the native Windows sandbox cannot spawn the process.
+- `AGENTS.md` now says fresh exact pre-check outputs provided in the current prompt can be treated as pre-check context unless files changed or a new check is required.
+- Added project-level `.codex/config.toml` with conservative local settings:
+  - `approval_policy = "on-request"`
+  - `sandbox_mode = "workspace-write"`
+  - Windows sandbox set to `elevated`
+  - workspace-write network access disabled
+
+Checks run:
+
+- `git log --oneline --decorate -5; git status --short; git diff --name-only` initially hit a Windows sandbox spawn failure and was rerun once with escalation.
+- Pre-check result before changes: HEAD `b252a5c Polish Web Scanner dashboard UX`; working tree clean.
+- `python -m compileall api collector database scripts smoke_check.py` -> passed.
+- `python smoke_check.py` -> passed; FastAPI TestClient emitted the known Starlette/httpx deprecation warning.
+
+Unchanged:
+
+- No application code changed.
+- No API, collector, DB, web UI, or README behavior changed.
+- No `.env`, `.venv/`, `data/`, `backups/`, secrets, credentials, tokens, or API keys were changed.
+- No collector loop was run.
+- No commit was made.
 
 ## Web Scanner UX Polish v0.2.1
 
