@@ -14,7 +14,7 @@ Local-first research collector for Binance Margin available inventory. The proje
 - Optional helper cache:
   - `price_klines`
 - Out of scope:
-  - web dashboard
+  - frontend build systems
   - Telegram
   - trading / borrow / repay actions
 
@@ -295,7 +295,7 @@ JSON rules:
 - Timestamps are returned as UTC ISO strings ending with `Z`.
 - API output is research data, not trading signals.
 
-## Web Scanner MVP v0.2
+## Web Scanner MVP v0.2.1
 
 The web scanner is a small static dashboard served by FastAPI. It uses no React, Vite, Next.js, npm build step, chart library, or frontend package manager.
 
@@ -328,8 +328,13 @@ UI features:
 
 - Data freshness status and stale warning.
 - Timeframe, limit, exclude-stables, and refresh controls.
+- Timeframe changes auto-refresh the scanner summary.
+- Limit changes auto-refresh the scanner summary. Limit means the number of rows returned per scanner table, so `20` means up to 20 assets in each ranking.
+- Exclude-stables changes auto-refresh the scanner summary.
+- Timeframe is the comparison window for available inventory change: `15m`, `30m`, `1h`, or `4h`.
 - Four scanner tables for borrow pressure and recovery rankings.
 - Same-page asset drilldown with recent metrics and pool history tables.
+- Compact number formatting for readability, with exact API values preserved in tooltips.
 - Readable error messages when API requests fail.
 
 The web UI is read-only and shows research metrics, not trading signals.

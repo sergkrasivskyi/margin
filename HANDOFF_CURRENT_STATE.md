@@ -16,7 +16,56 @@
 - Milestone `Backend API Scanner v0.1.1` is implemented.
 - Repo-level `AGENTS.md` project instructions are added for future Codex work.
 - Milestone `Web Scanner MVP v0.2` is implemented as a static read-only FastAPI-served dashboard.
+- Milestone `Web Scanner UX Polish v0.2.1` is implemented.
 - Next milestone: continue scanner/API UX planning if needed.
+
+## Web Scanner UX Polish v0.2.1
+
+Changed files:
+
+- `web/index.html`
+- `web/app.js`
+- `web/styles.css`
+- `README.md`
+- `HANDOFF_CURRENT_STATE.md`
+
+UX changes:
+
+- Timeframe, limit, and exclude-stables controls auto-refresh scanner summary data.
+- Refresh button remains available for manual reload.
+- Added visible loading indicator while summary data is fetched.
+- Added helper text and tooltips explaining timeframe, limit, and exclude-stables controls.
+- Added compact metric explanation section for Borrow Pressure and Recovery.
+- Compact number formatting displays large Decimal strings as `K`, `M`, or `B` while preserving exact original values in tooltips.
+- Timestamps display in compact UTC format while preserving full original values in tooltips.
+- Scanner tables are more compact and keep sticky headers inside scrollable table containers.
+- Asset buttons remain visually clickable and still load same-page drilldown tables.
+- Added inline SVG favicon data URL to avoid browser `favicon.ico` 404.
+
+Checks run:
+
+- `python -m compileall api collector database scripts smoke_check.py` -> passed.
+- `python smoke_check.py` -> passed; FastAPI TestClient emitted the known Starlette/httpx deprecation warning.
+- `node --check web\app.js` -> passed.
+- Local uvicorn HTTP verification -> passed for `GET /`, `GET /static/app.js`, and `GET /api/scanner/summary?tf=15m&limit=3&exclude_stables=true`.
+- In-app browser verification was attempted but blocked by a Windows sandbox spawn error in the browser runtime.
+
+Limitations:
+
+- No charts.
+- No frontend build system, npm, React, Vite, Next.js, or chart libraries.
+- Number formatting is display-only and is not used for calculations.
+- UI remains local and read-only.
+
+Unchanged:
+
+- No DB schema changes.
+- Collector formulas were not changed.
+- Binance endpoints were not changed.
+- Scheduler behavior was not changed.
+- API behavior and write behavior were not changed.
+- No Telegram, alerts, AI classification, z-score, anomaly score, Coinglass, borrow, repay, or trading actions were added.
+- `.env`, `.venv/`, `data/`, `backups/`, credentials, tokens, and API keys were not changed.
 
 ## Web Scanner MVP v0.2
 

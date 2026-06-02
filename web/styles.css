@@ -9,6 +9,7 @@
   --stale: #ffb84d;
   --danger: #ff6b6b;
   --accent: #79c7ff;
+  --accent-soft: rgba(121, 199, 255, 0.12);
 }
 
 * {
@@ -59,6 +60,11 @@ select {
   gap: 0.5rem;
   color: var(--muted);
   white-space: nowrap;
+}
+
+.loading-indicator {
+  color: var(--accent);
+  font-size: 0.84rem;
 }
 
 main {
@@ -171,7 +177,7 @@ dd {
 
 .controls-panel {
   display: flex;
-  align-items: end;
+  align-items: stretch;
   gap: 1rem;
   flex-wrap: wrap;
 }
@@ -180,6 +186,21 @@ label {
   display: grid;
   gap: 0.35rem;
   color: var(--muted);
+}
+
+.control-group {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 12rem;
+}
+
+.control-group p,
+.checkbox-label small,
+.explainer-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 select,
@@ -197,6 +218,12 @@ input {
   align-items: center;
   gap: 0.5rem;
   min-height: 2.4rem;
+  max-width: 20rem;
+}
+
+.checkbox-label span {
+  display: grid;
+  gap: 0.2rem;
 }
 
 button {
@@ -211,6 +238,25 @@ button {
 
 button:hover {
   filter: brightness(1.08);
+}
+
+button:disabled {
+  cursor: wait;
+  filter: saturate(0.65);
+  opacity: 0.75;
+}
+
+.explainer-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+  background: linear-gradient(135deg, rgba(121, 199, 255, 0.1), rgba(70, 209, 130, 0.05));
+}
+
+.explainer-panel strong {
+  color: var(--stale);
+  font-size: 0.86rem;
 }
 
 .rankings-grid,
@@ -228,20 +274,21 @@ button:hover {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
+  max-height: 28rem;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 920px;
+  min-width: 860px;
 }
 
 th,
 td {
   text-align: left;
-  padding: 0.55rem 0.65rem;
+  padding: 0.45rem 0.5rem;
   border-bottom: 1px solid var(--line);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   white-space: nowrap;
 }
 
@@ -250,6 +297,7 @@ th {
   background: #131715;
   position: sticky;
   top: 0;
+  z-index: 1;
 }
 
 tr:hover td {
@@ -262,6 +310,8 @@ tr:hover td {
   color: var(--accent);
   background: transparent;
   font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
 }
 
 .empty-state {
@@ -289,7 +339,8 @@ tr:hover td {
 
   .freshness-grid,
   .rankings-grid,
-  .detail-grid {
+  .detail-grid,
+  .explainer-panel {
     grid-template-columns: 1fr;
   }
 }

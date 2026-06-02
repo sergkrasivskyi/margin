@@ -3,6 +3,7 @@ const state = {
   limit: 20,
   excludeStables: true,
   selectedAsset: null,
+  summaryRequestId: 0,
 };
 
 const rankingConfig = {
@@ -44,6 +45,14 @@ function clearError() {
   panel.hidden = true;
 }
 
+function setLoading(isLoading) {
+  const indicator = el("loading-indicator");
+  const refresh = el("refresh");
+  indicator.hidden = !isLoading;
+  refresh.disabled = isLoading;
+  refresh.textContent = isLoading ? "Refreshing..." : "Refresh";
+}
+
 async function getJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -53,20 +62,56 @@ async function getJson(url) {
   return response.json();
 }
 
-function shorten(value) {
+function compactDecimal(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+
+  const text = String(value);
+  if (/^-?0(?:\.0+)?(?:e-\d+)?$/i.test(text)) {
+    return "0";
+  }
+
+  const number = Number(text);
+  if (!Number.isFinite(number)) {
+    return text.length <= 16 ? text : `${text.slice(0, 12)}...`;
+  }
+
+  const abs = Math.abs(number);
+  const format = (divisor, suffix) => `${(number / divisor).toFixed(abs >= divisor * 10 ? 1 : 2).replace(/\.?0+$/, "")}${suffix}`;
+
+  if (abs >= 1_000_000_000) {
+    return format(1_000_000_000, "B");
+  }
+  if (abs >= 1_000_000) {
+    return format(1_000_000, "M");
+  }
+  if (abs >= 1_000) {
+    return format(1_000, "K");
+  }
+  if (abs > 0 && abs < 0.000001) {
+    return number.toExponential(2);
+  }
+  return text.length <= 12 ? text : number.toLocaleString("en-US", { maximumFractionDigits: 6 });
+}
+
+function compactTimestamp(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
   }
   const text = String(value);
-  if (text.length <= 16) {
-    return text;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return text.length <= 19 ? text : `${text.slice(0, 19)}...`;
   }
-  return `${text.slice(0, 12)}...`;
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
 }
 
-function cell(value) {
+function cell(value, type = "decimal") {
   const text = value === null || value === undefined || value === "" ? "-" : String(value);
-  return `<span title="${escapeHtml(text)}">${escapeHtml(shorten(text))}</span>`;
+  const display = type === "timestamp" ? compactTimestamp(value) : compactDecimal(value);
+  return `<span title="${escapeHtml(text)}">${escapeHtml(display)}</span>`;
 }
 
 function escapeHtml(value) {
@@ -80,17 +125,17 @@ function escapeHtml(value) {
 
 function freshnessRows(freshness) {
   const rows = [
-    ["latest_metrics_calculated_at", freshness.latest_metrics_calculated_at],
-    ["latest_snapshot_at", freshness.latest_snapshot_at],
+    ["latest_metrics_calculated_at", freshness.latest_metrics_calculated_at, "timestamp"],
+    ["latest_snapshot_at", freshness.latest_snapshot_at, "timestamp"],
     ["latest_metrics_age_seconds", freshness.latest_metrics_age_seconds],
     ["latest_snapshot_age_seconds", freshness.latest_snapshot_age_seconds],
     ["last_collector_run_status", freshness.last_collector_run_status],
-    ["last_collector_run_finished_at", freshness.last_collector_run_finished_at],
+    ["last_collector_run_finished_at", freshness.last_collector_run_finished_at, "timestamp"],
     ["is_data_stale", freshness.is_data_stale],
     ["stale_after_seconds", freshness.stale_after_seconds],
   ];
   return rows
-    .map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${cell(value)}</dd></div>`)
+    .map(([key, value, type]) => `<div><dt>${escapeHtml(key)}</dt><dd>${cell(value, type)}</dd></div>`)
     .join("");
 }
 
@@ -127,7 +172,7 @@ function renderRankingTable(targetId, items) {
           <td>${cell(item.net_pool_change_percent)}</td>
           <td>${cell(item.spot_price_usdt)}</td>
           <td>${cell(item.price_symbol)}</td>
-          <td>${cell(item.current_snapshot_at)}</td>
+          <td>${cell(item.current_snapshot_at, "timestamp")}</td>
         </tr>
       `
     )
@@ -138,15 +183,15 @@ function renderRankingTable(targetId, items) {
       <table>
         <thead>
           <tr>
-            <th>Asset</th>
-            <th>${escapeHtml(config.label)}</th>
-            <th>Companion metric</th>
-            <th>Current inventory</th>
-            <th>Previous inventory</th>
-            <th>Net pool change %</th>
-            <th>Spot price USDT</th>
-            <th>Price symbol</th>
-            <th>Current snapshot</th>
+          <th>Asset</th>
+          <th>${escapeHtml(config.label)}</th>
+            <th>Other metric</th>
+            <th>Current inv.</th>
+            <th>Previous inv.</th>
+            <th>Net change %</th>
+            <th>Spot USDT</th>
+            <th>Symbol</th>
+            <th>Snapshot</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -171,7 +216,7 @@ function renderMetricsHistory(items) {
     .map(
       (item) => `
         <tr>
-          <td>${cell(item.calculated_at)}</td>
+          <td>${cell(item.calculated_at, "timestamp")}</td>
           <td>${cell(item.borrow_pressure_usdt)}</td>
           <td>${cell(item.borrow_pressure_percent)}</td>
           <td>${cell(item.recovery_usdt)}</td>
@@ -209,7 +254,7 @@ function renderPoolHistory(items) {
     .map(
       (item) => `
         <tr>
-          <td>${cell(item.snapshot_at)}</td>
+          <td>${cell(item.snapshot_at, "timestamp")}</td>
           <td>${cell(item.pool_type)}</td>
           <td>${cell(item.available_inventory)}</td>
           <td>${cell(item.source)}</td>
@@ -236,6 +281,8 @@ function renderPoolHistory(items) {
 
 async function loadSummary() {
   clearError();
+  const requestId = ++state.summaryRequestId;
+  setLoading(true);
   state.tf = el("timeframe").value;
   state.limit = Math.min(100, Math.max(1, Number(el("limit").value || 20)));
   el("limit").value = state.limit;
@@ -244,13 +291,22 @@ async function loadSummary() {
   const url = `/api/scanner/summary?tf=${encodeURIComponent(state.tf)}&limit=${state.limit}&exclude_stables=${state.excludeStables}`;
   try {
     const [health, summary] = await Promise.all([getJson("/health"), getJson(url)]);
+    if (requestId !== state.summaryRequestId) {
+      return;
+    }
     el("api-version").textContent = `API ${health.version || "unknown"}`;
     renderSummary(summary);
     if (state.selectedAsset) {
       await loadAssetDetail(state.selectedAsset);
     }
   } catch (error) {
-    showError(`Unable to load scanner summary. ${error.message}`);
+    if (requestId === state.summaryRequestId) {
+      showError(`Unable to load scanner summary. ${error.message}`);
+    }
+  } finally {
+    if (requestId === state.summaryRequestId) {
+      setLoading(false);
+    }
   }
 }
 
@@ -280,8 +336,16 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("DOMContentLoaded", () => {
   el("timeframe").addEventListener("change", loadSummary);
-  el("limit").addEventListener("change", loadSummary);
+  el("limit").addEventListener("input", debounce(loadSummary, 350));
   el("exclude-stables").addEventListener("change", loadSummary);
   el("refresh").addEventListener("click", loadSummary);
   loadSummary();
 });
+
+function debounce(callback, delayMs) {
+  let timeoutId;
+  return () => {
+    window.clearTimeout(timeoutId);
+    timeoutId = window.setTimeout(callback, delayMs);
+  };
+}

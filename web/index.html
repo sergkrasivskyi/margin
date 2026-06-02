@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Margin Loan Research Scanner</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23171b19'/%3E%3Cpath d='M14 43h36M18 37l9-10 8 6 12-16' fill='none' stroke='%2379c7ff' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -15,6 +19,7 @@
       <div class="header-meta">
         <span id="api-version">API version loading...</span>
         <span id="freshness-pill" class="pill pill-muted">Freshness loading...</span>
+        <span id="loading-indicator" class="loading-indicator" hidden>Loading...</span>
       </div>
     </header>
 
@@ -30,24 +35,54 @@
       </section>
 
       <section class="panel controls-panel">
-        <label>
-          Timeframe
-          <select id="timeframe">
+        <div class="control-group">
+          <label for="timeframe">Timeframe</label>
+          <select
+            id="timeframe"
+            title="Comparison window for available inventory change: 15m, 30m, 1h, 4h."
+          >
             <option value="15m">15m</option>
             <option value="30m">30m</option>
             <option value="1h">1h</option>
             <option value="4h">4h</option>
           </select>
-        </label>
-        <label>
-          Limit
-          <input id="limit" type="number" min="1" max="100" value="20" />
-        </label>
-        <label class="checkbox-label">
+          <p>Comparison window for available inventory change.</p>
+        </div>
+        <div class="control-group">
+          <label for="limit">Limit</label>
+          <input
+            id="limit"
+            type="number"
+            min="1"
+            max="100"
+            value="20"
+            title="Number of rows returned per scanner table. Limit 20 means up to 20 assets in each table."
+          />
+          <p>Rows returned per scanner table. Range: 1-100.</p>
+        </div>
+        <label
+          class="checkbox-label"
+          title="Hide stablecoins such as USDT, USDC, FDUSD, TUSD, DAI, USTC from scanner rankings."
+        >
           <input id="exclude-stables" type="checkbox" checked />
-          Exclude stables
+          <span>
+            Exclude stables
+            <small>Hide USDT, USDC, FDUSD, TUSD, DAI, USTC.</small>
+          </span>
         </label>
         <button id="refresh" type="button">Refresh</button>
+      </section>
+
+      <section class="panel explainer-panel">
+        <div>
+          <h2>Borrow Pressure</h2>
+          <p>Proxy for available inventory decrease. Higher value means more pool was consumed.</p>
+        </div>
+        <div>
+          <h2>Recovery</h2>
+          <p>Proxy for available inventory increase/refill.</p>
+        </div>
+        <strong>Research metrics only, not trading signals.</strong>
       </section>
 
       <section class="rankings-grid">
