@@ -15,7 +15,6 @@ Local-first research collector for Binance Margin available inventory. The proje
   - `price_klines`
 - Out of scope:
   - web dashboard
-  - backend API
   - Telegram
   - trading / borrow / repay actions
 
@@ -150,6 +149,65 @@ health_report: top_borrow_pressure_percent timeframe=15m
 health_report: top_recovery_usdt timeframe=15m
 health_report: top_recovery_percent timeframe=15m
 ```
+
+## Read-only Backend API v0.1
+
+The FastAPI API exposes existing PostgreSQL research data only. It does not call Binance write endpoints, does not borrow, repay, trade, alert, classify, or mutate raw collector tables.
+
+Install dependencies:
+
+```powershell
+pip install -r collector\requirements.txt
+```
+
+Run locally:
+
+```powershell
+python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Endpoints:
+
+- `GET /health`
+- `GET /api/overview`
+- `GET /api/scanner/latest`
+- `GET /api/assets`
+- `GET /api/assets/{asset}/metrics-history`
+- `GET /api/assets/{asset}/pool-history`
+
+Example requests:
+
+```powershell
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/overview
+curl "http://127.0.0.1:8000/api/scanner/latest?tf=15m&metric=borrow_pressure_usdt&limit=20&exclude_stables=true"
+curl "http://127.0.0.1:8000/api/scanner/latest?tf=1h&metric=borrow_pressure_percent&limit=20"
+curl "http://127.0.0.1:8000/api/assets?exclude_stables=false&limit=500"
+curl "http://127.0.0.1:8000/api/assets/BTC/metrics-history?tf=15m&limit=200"
+curl "http://127.0.0.1:8000/api/assets/BTC/pool-history?limit=500"
+```
+
+Scanner defaults:
+
+- `tf=15m`
+- `metric=borrow_pressure_usdt`
+- `limit=20`
+- `exclude_stables=true`
+
+Supported scanner metrics:
+
+- `borrow_pressure_usdt`
+- `borrow_pressure_percent`
+- `recovery_usdt`
+- `recovery_percent`
+
+The scanner ranks only the latest calculated block for the selected timeframe. Stable assets excluded by default in scanner responses: `USDT`, `USDC`, `FDUSD`, `TUSD`, `DAI`, `USTC`.
+
+JSON rules:
+
+- Decimal values are returned as strings.
+- Timestamps are returned as UTC ISO strings ending with `Z`.
+- API output is research data, not trading signals.
 
 ## SQL checks
 

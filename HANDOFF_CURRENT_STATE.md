@@ -11,7 +11,8 @@
 - Binance `available-inventory` snapshots are collected into `margin_pool_snapshots`.
 - Legacy `pool_metrics` are still calculated per snapshot block.
 - Milestone `v0.3` is now implemented: Spot USDT prices + Derived Borrow Pressure Metrics.
-- Next milestone: `Backend API Scanner v0.1`.
+- Milestone `Backend API Scanner v0.1` is implemented as a read-only FastAPI API.
+- Next milestone: API verification and UI/dashboard planning, if needed.
 
 ## v0.3 changes
 
@@ -55,6 +56,87 @@
 - Synthetic prices and indirect conversion are not used.
 - Scanner note: stablecoins can appear in TOP results, so Backend/API/UI should support excluding stablecoins.
 - Next milestone: `Backend API Scanner v0.1`.
+
+## Backend API Scanner v0.1
+
+Implemented files:
+
+- `api/__init__.py`
+- `api/main.py`
+- `api/db.py`
+- `api/settings.py`
+- `api/schemas.py`
+- `api/scanner.py`
+- `smoke_check.py`
+- `collector/requirements.txt`
+- `README.md`
+- `HANDOFF_CURRENT_STATE.md`
+
+Implemented endpoints:
+
+- `GET /health`
+- `GET /api/overview`
+- `GET /api/scanner/latest`
+- `GET /api/assets`
+- `GET /api/assets/{asset}/metrics-history`
+- `GET /api/assets/{asset}/pool-history`
+
+API rules:
+
+- Read-only FastAPI API over existing PostgreSQL tables.
+- DB connections use PostgreSQL `default_transaction_read_only=on`.
+- No frontend, dashboard, Telegram, alerts, AI classification, Coinglass, z-score, anomaly score, or Binance write calls.
+- No borrow, repay, or trading actions.
+- No collector logic changes.
+- No DB schema migrations.
+- `.env` was not changed.
+
+Scanner behavior:
+
+- Supported timeframes: `15m`, `30m`, `1h`, `4h`.
+- Supported metrics:
+  - `borrow_pressure_usdt`
+  - `borrow_pressure_percent`
+  - `recovery_usdt`
+  - `recovery_percent`
+- `GET /api/scanner/latest` uses only the latest `calculated_at` block for the selected timeframe.
+- Scanner default: `tf=15m`, `metric=borrow_pressure_usdt`, `limit=20`, `exclude_stables=true`.
+- Stable filter is response/query level only and never deletes or changes raw DB data.
+- Stable assets: `USDT`, `USDC`, `FDUSD`, `TUSD`, `DAI`, `USTC`.
+
+Serialization:
+
+- Decimal values are serialized as strings.
+- Timestamps are returned as UTC ISO strings ending with `Z`.
+- API responses are research metrics, not trading signals.
+
+Assumptions:
+
+- Existing v0.3 tables are present and populated by the collector.
+- API runs locally from the same `.venv` and reads the same PostgreSQL settings as the collector.
+- `collector/requirements.txt` is the project dependency file for this milestone.
+
+Limitations:
+
+- API is not Dockerized in this milestone.
+- No auth layer yet.
+- No pagination cursor yet; endpoints use bounded `limit` query params.
+- No frontend/UI yet.
+
+Commands run:
+
+- `git status --short` -> clean working tree before changes.
+- `git diff --name-only` -> clean working tree before changes.
+- `pip install -r collector\requirements.txt` -> installed FastAPI/Uvicorn dependencies.
+- `python -m compileall .` -> passed.
+- `python smoke_check.py` -> passed.
+- FastAPI `TestClient` runtime checks against local PostgreSQL -> passed for:
+  - `/health`
+  - `/api/overview`
+  - `/api/scanner/latest?tf=15m&metric=borrow_pressure_usdt&limit=5`
+  - `/api/assets?limit=5`
+  - `/api/assets/BTC/metrics-history?tf=15m&limit=5`
+  - `/api/assets/BTC/pool-history?limit=5`
 
 ## New tables
 
