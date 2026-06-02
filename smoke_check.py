@@ -7,6 +7,8 @@ from api.settings import SUPPORTED_METRICS, SUPPORTED_TIMEFRAMES
 
 
 EXPECTED_ROUTES = {
+    "/",
+    "/static",
     "/health",
     "/api/overview",
     "/api/scanner/latest",
@@ -17,6 +19,9 @@ EXPECTED_ROUTES = {
 }
 
 SMOKE_ENDPOINTS = (
+    "/",
+    "/static/app.js",
+    "/static/styles.css",
     "/health",
     "/api/overview",
     "/api/scanner/latest?tf=15m&metric=borrow_pressure_usdt&limit=5",

@@ -15,7 +15,70 @@
 - Milestone `Collector UX / Health Report v0.3.1` is implemented.
 - Milestone `Backend API Scanner v0.1.1` is implemented.
 - Repo-level `AGENTS.md` project instructions are added for future Codex work.
+- Milestone `Web Scanner MVP v0.2` is implemented as a static read-only FastAPI-served dashboard.
 - Next milestone: continue scanner/API UX planning if needed.
+
+## Web Scanner MVP v0.2
+
+Changed files:
+
+- `api/main.py`
+- `smoke_check.py`
+- `web/index.html`
+- `web/app.js`
+- `web/styles.css`
+- `README.md`
+- `HANDOFF_CURRENT_STATE.md`
+
+UI routes:
+
+- `GET /`
+- `GET /static/app.js`
+- `GET /static/styles.css`
+
+API endpoints used by the UI:
+
+- `GET /api/overview`
+- `GET /api/scanner/summary`
+- `GET /api/assets/{asset}/metrics-history`
+- `GET /api/assets/{asset}/pool-history`
+
+Implemented UI:
+
+- Header with project name, API version, and freshness status.
+- Data freshness block with stale warning or fresh status.
+- Controls for timeframe, limit, exclude stables, and refresh.
+- Four scanner tables:
+  - Top Borrow Pressure USDT
+  - Top Borrow Pressure %
+  - Top Recovery USDT
+  - Top Recovery %
+- Clickable asset rows that load same-page recent metrics and pool history tables.
+- Readable API error display.
+- Decimal strings are displayed as strings; long values are shortened visually with full value in tooltip.
+
+Limitations:
+
+- No charts yet.
+- No frontend build system, npm, React, Vite, Next.js, or chart libraries.
+- UI is local and read-only.
+
+Unchanged:
+
+- No DB schema changes.
+- Collector formulas were not changed.
+- Binance endpoints were not changed.
+- Scheduler behavior was not changed.
+- API write behavior was not added.
+- No Telegram, alerts, AI classification, z-score, anomaly score, Coinglass, borrow, repay, or trading actions were added.
+
+Checks run:
+
+- `git log --oneline --decorate -5` -> latest commit before changes: `6c572ac Add Codex project instructions`.
+- `git status --short` -> clean working tree before changes.
+- `git diff --name-only` -> clean working tree before changes.
+- `python -m compileall api collector database scripts smoke_check.py` -> passed.
+- `python smoke_check.py` -> passed; covers web root, static JS/CSS, API endpoints, and invalid scanner params.
 
 ## AGENTS.md project instructions
 

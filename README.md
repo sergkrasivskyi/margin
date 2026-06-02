@@ -210,6 +210,12 @@ Run locally:
 python -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+Open the local Web Scanner:
+
+```text
+http://127.0.0.1:8000/
+```
+
 Endpoints:
 
 - `GET /health`
@@ -219,6 +225,8 @@ Endpoints:
 - `GET /api/assets`
 - `GET /api/assets/{asset}/metrics-history`
 - `GET /api/assets/{asset}/pool-history`
+
+The root route `GET /` serves a simple static Web Scanner MVP. It is read-only and shows research metrics, not trading signals.
 
 Example requests:
 
@@ -286,6 +294,45 @@ JSON rules:
 - Decimal values are returned as strings.
 - Timestamps are returned as UTC ISO strings ending with `Z`.
 - API output is research data, not trading signals.
+
+## Web Scanner MVP v0.2
+
+The web scanner is a small static dashboard served by FastAPI. It uses no React, Vite, Next.js, npm build step, chart library, or frontend package manager.
+
+Run the collector separately when fresh data is needed:
+
+```powershell
+python -m collector.main --loop
+```
+
+Run API and web UI:
+
+```powershell
+python -m uvicorn api.main:app --reload --port 8000
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000/
+```
+
+The page uses:
+
+- `GET /api/overview`
+- `GET /api/scanner/summary`
+- `GET /api/assets/{asset}/metrics-history`
+- `GET /api/assets/{asset}/pool-history`
+
+UI features:
+
+- Data freshness status and stale warning.
+- Timeframe, limit, exclude-stables, and refresh controls.
+- Four scanner tables for borrow pressure and recovery rankings.
+- Same-page asset drilldown with recent metrics and pool history tables.
+- Readable error messages when API requests fail.
+
+The web UI is read-only and shows research metrics, not trading signals.
 
 ## SQL checks
 

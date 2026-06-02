@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from api import db, scanner
 from api.schemas import (
@@ -22,11 +26,19 @@ from api.settings import (
     load_settings,
 )
 
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
 app = FastAPI(
     title="Margin Loan Research API",
-    version="0.1.0",
+    version="0.2.0",
     description="Read-only research API for Binance margin available-inventory metrics.",
 )
+app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def web_index() -> FileResponse:
+    return FileResponse(WEB_DIR / "index.html")
 
 
 @app.get("/health", response_model=HealthResponse)

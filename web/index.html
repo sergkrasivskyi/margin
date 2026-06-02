@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Margin Loan Research Scanner</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Margin Loan Research Scanner</h1>
+        <p>Read-only research metrics for Binance margin available inventory.</p>
+      </div>
+      <div class="header-meta">
+        <span id="api-version">API version loading...</span>
+        <span id="freshness-pill" class="pill pill-muted">Freshness loading...</span>
+      </div>
+    </header>
+
+    <main>
+      <section id="error-panel" class="error-panel" hidden></section>
+
+      <section class="panel freshness-panel">
+        <div class="section-title">
+          <h2>Data Freshness</h2>
+          <p id="freshness-message">Loading freshness state...</p>
+        </div>
+        <dl id="freshness-grid" class="freshness-grid"></dl>
+      </section>
+
+      <section class="panel controls-panel">
+        <label>
+          Timeframe
+          <select id="timeframe">
+            <option value="15m">15m</option>
+            <option value="30m">30m</option>
+            <option value="1h">1h</option>
+            <option value="4h">4h</option>
+          </select>
+        </label>
+        <label>
+          Limit
+          <input id="limit" type="number" min="1" max="100" value="20" />
+        </label>
+        <label class="checkbox-label">
+          <input id="exclude-stables" type="checkbox" checked />
+          Exclude stables
+        </label>
+        <button id="refresh" type="button">Refresh</button>
+      </section>
+
+      <section class="rankings-grid">
+        <article class="panel ranking-panel">
+          <h2>Top Borrow Pressure USDT</h2>
+          <div id="top_borrow_pressure_usdt"></div>
+        </article>
+        <article class="panel ranking-panel">
+          <h2>Top Borrow Pressure %</h2>
+          <div id="top_borrow_pressure_percent"></div>
+        </article>
+        <article class="panel ranking-panel">
+          <h2>Top Recovery USDT</h2>
+          <div id="top_recovery_usdt"></div>
+        </article>
+        <article class="panel ranking-panel">
+          <h2>Top Recovery %</h2>
+          <div id="top_recovery_percent"></div>
+        </article>
+      </section>
+
+      <section id="asset-detail" class="panel asset-detail" hidden>
+        <div class="section-title">
+          <h2 id="asset-title">Asset Details</h2>
+          <p>Recent metrics and pool history for the selected asset.</p>
+        </div>
+        <div class="detail-grid">
+          <article>
+            <h3>Recent Metrics History</h3>
+            <div id="metrics-history"></div>
+          </article>
+          <article>
+            <h3>Recent Pool History</h3>
+            <div id="pool-history"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
